@@ -32,7 +32,7 @@
     "prepack": "node --run build"
   },
   "dependencies": {
-    "@phreshos/core": "^0.1.20",
+    "@phreshos/core": "^0.1.21",
     "adm-zip": "^0.6.0",
     "jiti": "^2.7.0"
   },
