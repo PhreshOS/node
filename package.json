@@ -1,0 +1,44 @@
+{
+  "name": "@phreshos/gateway",
+  "version": "0.1.0",
+  "description": "Programmatic owner-local access to PhreshOS and Program projects.",
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "author": "Zohayr SLILEH",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PhreshOS/gateway.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "check": "tsc --noEmit",
+    "build": "node --run clean && tsc --noEmit false --outDir dist --rootDir source",
+    "test": "node --run build && node --test tests/*.test.mjs",
+    "verify": "node --run check && node --run test",
+    "prepack": "node --run build"
+  },
+  "dependencies": {
+    "@phreshos/core": "^0.1.20",
+    "adm-zip": "^0.6.0",
+    "jiti": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^26.2.0",
+    "typescript": "^6.0.3"
+  }
+}
