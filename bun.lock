@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@phreshos/gateway",
+      "name": "@phreshos/node",
       "dependencies": {
         "@phreshos/core": "^0.1.21",
         "adm-zip": "^0.6.0",

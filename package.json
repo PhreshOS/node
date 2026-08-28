@@ -1,7 +1,7 @@
 {
-  "name": "@phreshos/gateway",
+  "name": "@phreshos/node",
   "version": "0.1.0",
-  "description": "Programmatic owner-local access to PhreshOS and Program projects.",
+  "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
   "types": "dist/main.d.ts",
@@ -16,7 +16,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PhreshOS/gateway.git"
+    "url": "git+https://github.com/PhreshOS/node.git"
   },
   "publishConfig": {
     "access": "public",

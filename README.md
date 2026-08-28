@@ -1,10 +1,9 @@
-# @phreshos/gateway
+# @phreshos/node
 
-Programmatic owner-local access to a running PhreshOS System and to local
-Program projects.
+The Node.js interface for a running PhreshOS System and local Program projects.
 
 ```ts
-import { Gateway, Project } from "@phreshos/gateway"
+import { Gateway, Project } from "@phreshos/node"
 
 const project = await Project.open()
 const gateway = await Gateway.open()
