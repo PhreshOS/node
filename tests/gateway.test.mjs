@@ -4,7 +4,7 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { Client, Endpoint, Process, Program, Project, Server, System, gatewayAddress, resolveHome } from "../dist/main.js"
+import { Client, ClientService, Endpoint, Process, Program, Project, Server, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
 
 test("Project.open discovers phresh.config.ts from cwd by default", async () => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
@@ -161,6 +161,16 @@ test("System.connect exposes the shared System contract over one owner-local add
   try {
     assert.equal(system.home, await realpath(home))
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
+
+    const serverService = system.service({ program: "example", endpoint: "server", name: "state" })
+    const sameServerService = system.service({ program: "example", endpoint: "server", name: "state" })
+    const clientService = system.service({ program: "example", endpoint: "client", name: "state" })
+
+    assert.equal(serverService, sameServerService)
+    assert(serverService instanceof Service)
+    assert(serverService instanceof ServerService)
+    assert(clientService instanceof Service)
+    assert(clientService instanceof ClientService)
   } finally {
     await system.disconnect()
     await new Promise(resolve => server.close(resolve))

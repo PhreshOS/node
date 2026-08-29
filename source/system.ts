@@ -1,11 +1,12 @@
 import {
   Client as CoreClient,
-  ClientServiceHandler as CoreClientServiceHandler,
+  ClientService as CoreClientService,
   Endpoint as CoreEndpoint,
   Process as CoreProcess,
   Program as CoreProgram,
   Server as CoreServer,
-  ServerServiceHandler as CoreServerServiceHandler,
+  ServerService as CoreServerService,
+  isServiceKey,
   type Appearance,
   type ClientDeclaration,
   type ClientServiceChannel,
@@ -17,7 +18,7 @@ import {
   type ProgramEvents,
   type ProgramCommandChunk,
   type ServerServiceChannel,
-  type ServiceHandler,
+  type Service,
   type ServiceKey,
   type Size,
   type System as CoreSystem,
@@ -123,11 +124,16 @@ export class System implements CoreSystem {
 
   public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap>
   public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap>
-  public service(key: ServiceKey): ServiceHandler {
+  public service(key: ServiceKey): Service {
     this.requireConnected()
-    return key.endpoint === "server"
-      ? new ServerService(this, key as ServiceKey & { endpoint: "server" })
-      : new ClientService(this, key as ServiceKey & { endpoint: "client" })
+    if (!isServiceKey(key)) throw new Error("A complete service key is required")
+
+    const normalized = Object.freeze({ program: key.program, endpoint: key.endpoint, name: key.name })
+    const identity = JSON.stringify([normalized.program, normalized.endpoint, normalized.name])
+
+    return this.handles.obtain(`service:${identity}`, () => normalized.endpoint === "server"
+      ? new ServerServiceHandle(this, normalized as ServiceKey & { endpoint: "server" })
+      : new ClientServiceHandle(this, normalized as ServiceKey & { endpoint: "client" }))
   }
 
   public programHandle(snapshot: ProgramSnapshot) {
@@ -458,7 +464,7 @@ class EndpointOperations extends Events<{}, unknown> {
   public async start(client?: LaunchClient) { await this.operation("start", client) }
   public async stop() { await this.operation("stop") }
 
-  public async service(): Promise<ServiceHandler | null> {
+  public async service(): Promise<Service | null> {
     const key = await this.system.transport.api({ capability: "endpoint", operation: "service", process: this.owner.identity, endpoint: this.endpoint }) as ServiceKey | null
     return key ? this.system.service(key as never) : null
   }
@@ -590,7 +596,12 @@ class ServiceBase extends Events<{ enable: undefined, disable: undefined }> {
   public async waitReady(timeout?: number) { await this.system.transport.api({ capability: "service", operation: "waitReady", key: this.key, timeout }) }
 }
 
-class ServerService<EventsMap extends object = {}> extends CoreServerServiceHandler<EventsMap> {
+/** Node-SDK handle for a Service provided by a Server Endpoint. */
+export class ServerService<EventsMap extends object = {}> extends CoreServerService<EventsMap> {
+  protected constructor() { super() }
+}
+
+class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<EventsMap> {
   public override readonly name: string
   public override readonly channel: ServerServiceChannel<EventsMap>
   private readonly base: ServiceBase
@@ -607,7 +618,12 @@ class ServerService<EventsMap extends object = {}> extends CoreServerServiceHand
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
 }
 
-class ClientService<EventsMap extends object = {}> extends CoreClientServiceHandler<EventsMap> {
+/** Node-SDK handle for a Service provided by a Client Endpoint. */
+export class ClientService<EventsMap extends object = {}> extends CoreClientService<EventsMap> {
+  protected constructor() { super() }
+}
+
+class ClientServiceHandle<EventsMap extends object = {}> extends ClientService<EventsMap> {
   public override readonly name: string
   public override readonly channel: ClientServiceChannel<EventsMap>
   private readonly base: ServiceBase
