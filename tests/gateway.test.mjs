@@ -4,7 +4,7 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { Project, System, gatewayAddress, resolveHome } from "../dist/main.js"
+import { Client, Endpoint, Process, Program, Project, Server, System, gatewayAddress, resolveHome } from "../dist/main.js"
 
 test("Project.open discovers phresh.config.ts from cwd by default", async () => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
@@ -46,14 +46,14 @@ test("Project derives one Server execution mode without retaining the other", ()
     }
   }, { directory })
 
-  assert.deepEqual(project.description("production").server, {
+  assert.deepEqual(project.productionDefinition().server, {
     location: join(directory, "dist", "server"),
     start: undefined,
     installCommand: undefined,
     uninstallCommand: undefined,
     entryFile: "main.js"
   })
-  assert.deepEqual(project.description("development").server, {
+  assert.deepEqual(project.developmentDefinition().server, {
     location: directory,
     start: undefined,
     installCommand: undefined,
@@ -62,40 +62,65 @@ test("Project derives one Server execution mode without retaining the other", ()
   })
 })
 
-test("Project composes production from force-create and one attached Process run", async () => {
+test("Project returns the original production Process generator without consuming it", async () => {
   const directory = join(process.cwd(), "project")
   const project = Project.define({
     identity: "example",
     client: { location: "client" }
   }, { directory })
-  const createdProcess = { identity: "process-identity" }
   const calls = []
-  let forgotten = false
+  const lifecycle = (async function* () {
+    yield { event: "started", process: { identity: "process-identity" } }
+  })()
   const system = {
-    async forceCreateProgram(description) {
-      calls.push({ operation: "forceCreateProgram", description })
+    async forceCreateProgram(definition) {
+      calls.push({ operation: "forceCreateProgram", definition })
       return {
         process: {
-          async *run(launch, options) {
+          run(launch, options) {
             calls.push({ operation: "run", launch, signal: options.signal })
-            yield { event: "started", process: createdProcess }
-            yield { event: "exited", process: createdProcess, exit: { status: "exited", code: 0, signal: null } }
+            return lifecycle
           }
-        },
-        async forget() { forgotten = true }
+        }
       }
     }
   }
 
-  const result = await project.start(system, { options: { mode: "test" } })
+  const signal = new AbortController().signal
+  const result = await project.start(system, { options: { mode: "test" }, signal })
 
-  assert.equal(result.process, createdProcess)
-  assert.equal(result.exit.code, 0)
-  assert.equal(forgotten, true)
+  assert.equal(result, lifecycle)
   assert.equal(calls[0].operation, "forceCreateProgram")
-  assert.equal(calls[0].description.client.location, join(directory, "client"))
+  assert.equal(calls[0].definition.client.location, join(directory, "client"))
   assert.deepEqual(calls[1].launch, { options: { mode: "test" } })
-  assert.equal(calls[1].signal.aborted, true)
+  assert.equal(calls[1].signal, signal)
+})
+
+test("Project returns the original development and installation generators", async () => {
+  const project = Project.define({
+    identity: "example",
+    client: {
+      location: "dist/client",
+      development: { url: "https://localhost.example/client/" }
+    }
+  })
+  const development = (async function* () {})()
+  const installation = (async function* () {})()
+  const definitions = []
+  const system = {
+    async forceCreateProgram(definition) {
+      definitions.push(definition)
+      return {
+        process: { run: () => development },
+        install: () => installation
+      }
+    }
+  }
+
+  assert.equal(await project.dev(system), development)
+  assert.equal(await project.install(system), installation)
+  assert.equal(definitions[0].client.location, "https://localhost.example/client/")
+  assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
 })
 
 test("Project keeps an HTTP development Client location as a runtime location", () => {
@@ -107,7 +132,7 @@ test("Project keeps an HTTP development Client location as a runtime location", 
     }
   })
 
-  assert.equal(project.description("development").client.location, "https://localhost.example/client/")
+  assert.equal(project.developmentDefinition().client.location, "https://localhost.example/client/")
 })
 
 test("System.connect exposes the shared System contract over one owner-local address", async () => {
@@ -159,7 +184,9 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     server: { start: true },
     client: null
   }
+  const replacement = { ...program, reference: "replacement-reference" }
   const process = {
+    reference: "process-reference",
     identity: "process-identity",
     name: null,
     program: program.identity,
@@ -169,6 +196,7 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     client: { declared: false, running: false }
   }
 
+  let creations = 0
   const server = createServer(socket => {
     let buffer = ""
     let running = false
@@ -180,10 +208,25 @@ test("a Process run is addressed to the exact Program and follows its signal", a
       requests.push(envelope)
 
       if (envelope.request.word === "force-create") {
-        socket.end(`${JSON.stringify({ event: "created", program })}\n`)
+        socket.end(`${JSON.stringify({ event: "created", program: creations++ === 0 ? program : replacement })}\n`)
       } else if (envelope.request.word === "run-process") {
         running = true
         socket.write(`${JSON.stringify({ event: "started", process })}\n`)
+      } else if (envelope.request.capability === "program" && envelope.request.operation === "inspect") {
+        socket.end(`${JSON.stringify({ success: true, result: program })}\n`)
+      } else if (envelope.request.capability === "program" && envelope.request.operation === "list") {
+        socket.end(`${JSON.stringify({ success: true, result: { data: [program], total: 1, truncated: false } })}\n`)
+      } else if (envelope.request.capability === "program" && envelope.request.operation === "wait") {
+        socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload: program } })}\n`)
+      } else if (envelope.request.capability === "process" && envelope.request.operation === "inspect") {
+        socket.end(`${JSON.stringify({ success: true, result: process })}\n`)
+      } else if (envelope.request.capability === "process" && envelope.request.operation === "list") {
+        socket.end(`${JSON.stringify({ success: true, result: { data: [process], total: 1, truncated: false } })}\n`)
+      } else if (envelope.request.capability === "process" && envelope.request.operation === "wait") {
+        const payload = envelope.request.input.event === "endpointStart"
+          ? { processSnapshot: process, endpoint: "server" }
+          : process
+        socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload } })}\n`)
       }
     })
     socket.on("close", () => { if (running) closeRun() })
@@ -202,12 +245,29 @@ test("a Process run is addressed to the exact Program and follows its signal", a
       storage: join(home, "storage"),
       server: { location: join(home, "server"), entryFile: "main.js" }
     })
+
+    assert.equal(created instanceof Program, true)
+
     const controller = new AbortController()
     const iterator = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
     const started = await iterator.next()
 
     assert.equal(started.value.event, "started")
     assert.equal(started.value.process.identity, process.identity)
+    assert.equal(started.value.process instanceof Process, true)
+    assert.equal(started.value.process.program(), created)
+    assert.equal(started.value.process.server instanceof Server, true)
+    assert.equal(started.value.process.server instanceof Endpoint, true)
+    assert.equal(started.value.process.client instanceof Client, true)
+    assert.equal(started.value.process.client instanceof Endpoint, true)
+    assert.equal(await started.value.process.server.process(), started.value.process)
+    assert.equal(await system.program.find(program.identity), created)
+    assert.equal((await system.program.list())[0], created)
+    assert.equal(await system.program.waitFor("create"), created)
+    assert.equal(await system.process.find(process.identity), started.value.process)
+    assert.equal((await system.process.list())[0], started.value.process)
+    assert.equal(await system.process.waitFor("create"), started.value.process)
+    assert.equal(await system.process.waitFor("endpointStart"), started.value.process.server)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(iterator.next(), /cancelled by test/)
@@ -216,6 +276,15 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     const run = requests.find(value => value.request.word === "run-process").request
     assert.deepEqual(run.handle, { identity: "example", reference: "program-reference" })
     assert.deepEqual(run.launch, { options: { mode: "test" } })
+
+    const replaced = await system.forceCreateProgram({
+      identity: "example",
+      storage: join(home, "storage"),
+      server: { location: join(home, "server"), entryFile: "main.js" }
+    })
+
+    assert.notEqual(replaced, created)
+    assert.equal(replaced instanceof Program, true)
   } finally {
     await system.disconnect()
     await new Promise(resolve => server.close(resolve))

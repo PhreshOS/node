@@ -2,14 +2,11 @@ import {
   isRelativeValue,
   layers,
   type Config,
-  type Exit,
   type Position,
-  type ProgramDescription,
+  type ProgramDefinition,
   type ServerExecution,
   type Size,
   type System as SystemContract,
-  type SystemProcessEntity,
-  type SystemProgramEntity
 } from "@phreshos/core"
 import AdmZip from "adm-zip"
 import { createHash } from "node:crypto"
@@ -18,7 +15,6 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { delimiter, isAbsolute, join, normalize, resolve, sep } from "node:path"
 import { createJiti } from "jiti"
-import { assertAvailable, commandFailure, DevelopmentClient, waitForDevelopmentClient } from "./client-development.js"
 
 const configFile = "phresh.config.ts"
 
@@ -49,7 +45,7 @@ export class Project {
     return new Project(config, resolve(path, ".."))
   }
 
-  /** Create a project from an already loaded definition. */
+  /** Create a Project from an already loaded authoring configuration. */
   public static define(config: Config, options: ProjectOptions = {}) {
     return new Project(config, options.directory ?? process.cwd())
   }
@@ -69,8 +65,17 @@ export class Project {
     return manifest
   }
 
-  /** Resolve this authoring definition into one runnable Program description. */
-  public description(mode: ProjectMode): ProgramDescription {
+  /** Resolve this authoring configuration into its production Program definition. */
+  public productionDefinition(): ProgramDefinition {
+    return this.definition("production")
+  }
+
+  /** Resolve this authoring configuration into its development Program definition. */
+  public developmentDefinition(): ProgramDefinition {
+    return this.definition("development")
+  }
+
+  private definition(mode: ProjectMode): ProgramDefinition {
     const config = this.config
     const server = serverHalf(config.server, mode)
     const client = clientHalf(config.client, mode)
@@ -103,7 +108,7 @@ export class Project {
         layer: config.client?.layer,
         minimize: config.client?.minimize
       } }
-    } as ProgramDescription
+    } as ProgramDefinition
   }
 
   /** Run the optional author-owned production build command. */
@@ -128,30 +133,22 @@ export class Project {
     })
   }
 
-  /** Build and run this project's production Program until its Process exits. */
+  /** Build this Project and return its production Process lifecycle generator. */
   public async start(system: SystemContract, options: ProjectRunOptions = {}) {
     await this.build()
-    return await this.run(system, "production", options)
+    return await this.run(system, this.productionDefinition(), options)
   }
 
-  /** Run this project's development Program and its optional Client server. */
+  /** Return this Project's development Process lifecycle generator. */
   public async dev(system: SystemContract, options: ProjectRunOptions = {}) {
-    return await this.run(system, "development", options)
+    return await this.run(system, this.developmentDefinition(), options)
   }
 
-  /** Build and install this project's production Program. */
-  public async install(system: SystemContract): Promise<SystemProgramEntity> {
+  /** Build this Project and return its Program installation generator. */
+  public async install(system: SystemContract) {
     await this.build()
-    const program = await system.forceCreateProgram(this.description("production"))
-    let installed = false
-
-    try {
-      for await (const chunk of program.install()) write(chunk.stream, chunk.text)
-      installed = true
-      return program
-    } finally {
-      if (!installed) await forgetCurrent(program)
-    }
+    const program = await system.forceCreateProgram(this.productionDefinition())
+    return program.install()
   }
 
   /** Build and package this Program into its canonical release shape. */
@@ -170,7 +167,7 @@ export class Project {
     if (this.config.icon) file(zip, this.directory, this.config.icon, "icon.png", "Program icon")
     if (this.config.agent) file(zip, this.directory, this.config.agent, "agent.md", "Program agent documentation")
 
-    const declaration = Buffer.from(JSON.stringify(packageDescription(this.config, version), null, 4) + "\n")
+    const declaration = Buffer.from(JSON.stringify(packageDefinition(this.config, version), null, 4) + "\n")
     zip.addFile("program.json", declaration)
 
     const archive = `${this.config.identity}@${version}.zip`
@@ -187,72 +184,9 @@ export class Project {
     return Object.freeze({ archive, archivePath, checksumPath, declarationPath, digest })
   }
 
-  private async run(system: SystemContract, mode: ProjectMode, options: ProjectRunOptions): Promise<ProjectRunResult> {
-    const description = this.description(mode)
-    const development = mode === "development" && description.client && (description.client.start ?? true)
-      ? this.config.client?.development
-      : undefined
-    const command = development?.startCommand
-
-    if (command) await assertAvailable(development.url)
-
-    const client = command ? new DevelopmentClient(command, this.directory) : undefined
-    const controller = new AbortController()
-    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
-    let program: SystemProgramEntity | null = null
-
-    try {
-      if (development) {
-        for await (const event of waitForDevelopmentClient(development, client, signal)) presentDevelopment(event)
-      }
-
-      program = await system.forceCreateProgram(description)
-      const run = program.process.run({ options: options.options ?? {} }, { signal })
-      const iterator = run[Symbol.asyncIterator]()
-      let lifecycle = iterator.next()
-      let developmentExit = client?.exited()
-      let developmentOutput = client?.outputAvailable()
-      let process: SystemProcessEntity | null = null
-      let ending: Exit | null = null
-
-      while (true) {
-        for (const event of client?.drain() ?? []) presentDevelopment(event)
-
-        const outcome = await Promise.race([
-          lifecycle.then(result => ({ source: "system" as const, result })),
-          ...(developmentExit ? [developmentExit.then(result => ({ source: "client" as const, result }))] : []),
-          ...(developmentOutput ? [developmentOutput.then(() => ({ source: "output" as const }))] : [])
-        ])
-
-        if (outcome.source === "output") {
-          developmentOutput = client?.outputAvailable()
-          continue
-        }
-
-        if (outcome.source === "client") {
-          developmentExit = undefined
-          if (!client?.endingWasRequested()) throw commandFailure(outcome.result)
-          continue
-        }
-
-        if (outcome.result.done) break
-
-        const event = outcome.result.value
-        if (event.event === "started") process = event.process
-        else if (event.event === "output") write(event.stream, event.text)
-        else ending = event.exit
-
-        lifecycle = iterator.next()
-      }
-
-      if (!process || !ending) throw new Error("The System ended the Program run without a complete Process lifecycle")
-
-      return Object.freeze({ process, exit: ending })
-    } finally {
-      controller.abort(new Error("The Project run ended"))
-      await client?.stop()
-      if (program) await forgetCurrent(program)
-    }
+  private async run(system: SystemContract, definition: ProgramDefinition, options: ProjectRunOptions) {
+    const program = await system.forceCreateProgram(definition)
+    return program.process.run({ options: options.options ?? {} }, { signal: options.signal })
   }
 }
 
@@ -264,11 +198,6 @@ export interface ProjectRunOptions {
   options?: Record<string, string>
   signal?: AbortSignal
 }
-
-export type ProjectRunResult = Readonly<{
-  process: SystemProcessEntity
-  exit: Exit
-}>
 
 export type PackedProject = Readonly<{
   archive: string
@@ -286,30 +215,14 @@ export interface Manifest {
   scripts?: Record<string, string>
 }
 
-function presentDevelopment(event: { event?: string, stream?: unknown, text?: unknown }) {
-  if (event.event === "output") write(event.stream === "err" ? "stderr" : "stdout", String(event.text ?? ""))
-}
-
-function write(stream: "stdout" | "stderr", text: string) {
-  (stream === "stderr" ? process.stderr : process.stdout).write(text)
-}
-
-async function forgetCurrent(program: SystemProgramEntity) {
-  try { await program.forget() }
-  catch (error) {
-    if (error instanceof Error && error.message === "The Program represented by this handle does not exist") return
-    throw error
-  }
-}
-
 function serverHalf(half: Config["server"], mode: ProjectMode) {
   if (!half) return null
 
-  const { development, startCommand, entryFile, ...description } = half
+  const { development, startCommand, entryFile, ...declared } = half
 
-  if (mode === "production" || !development) return { ...description, ...serverExecution({ startCommand, entryFile } as ServerExecution) }
+  if (mode === "production" || !development) return { ...declared, ...serverExecution({ startCommand, entryFile } as ServerExecution) }
 
-  return { ...description, location: ".", ...serverExecution(development) }
+  return { ...declared, location: ".", ...serverExecution(development) }
 }
 
 function serverExecution(server: ServerExecution) {
@@ -395,7 +308,7 @@ function commandEnvironment(directory: string) {
   return { ...process.env, [key]: [join(directory, "node_modules", ".bin"), inherited].filter(Boolean).join(delimiter) }
 }
 
-function packageDescription(config: Config, version: string) {
+function packageDefinition(config: Config, version: string) {
   return {
     identity: config.identity,
     name: config.name,

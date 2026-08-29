@@ -1,5 +1,14 @@
 export { gatewayAddress } from "./address.js"
-export { System, type ProgramProcessRunEvent, type ProgramProcessRunOptions } from "./system.js"
+export {
+  Client,
+  Endpoint,
+  Process,
+  Program,
+  Server,
+  System,
+  type ProgramProcessRunEvent,
+  type ProgramProcessRunOptions
+} from "./system.js"
 export { resolveHome } from "./home.js"
 export {
   Project,
@@ -7,6 +16,5 @@ export {
   type PackedProject,
   type ProjectMode,
   type ProjectOptions,
-  type ProjectRunOptions,
-  type ProjectRunResult
+  type ProjectRunOptions
 } from "./project.js"

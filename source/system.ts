@@ -1,5 +1,10 @@
 import {
+  Client as CoreClient,
   ClientServiceHandler as CoreClientServiceHandler,
+  Endpoint as CoreEndpoint,
+  Process as CoreProcess,
+  Program as CoreProgram,
+  Server as CoreServer,
   ServerServiceHandler as CoreServerServiceHandler,
   type Appearance,
   type ClientDeclaration,
@@ -8,7 +13,7 @@ import {
   type Launch,
   type LaunchClient,
   type Position,
-  type ProgramDescription,
+  type ProgramDefinition,
   type ProgramEvents,
   type ProgramCommandChunk,
   type ServerServiceChannel,
@@ -37,6 +42,7 @@ import type { Socket } from "node:net"
 import { homedir } from "node:os"
 import { gatewayAddress } from "./address.js"
 import Events from "./events.js"
+import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
 import { filesystemStorage } from "./storage.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
@@ -57,6 +63,11 @@ interface SystemTransport {
   lifecycle(request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
 }
 
+const ProgramBase = CoreProgram as unknown as new () => object
+const ProcessBase = CoreProcess as unknown as new () => object
+const ServerBase = CoreServer as unknown as new () => object
+const ClientBase = CoreClient as unknown as new () => object
+
 /** One connected owner-local implementation of the shared System contract. */
 export class System implements CoreSystem {
   public readonly home: string
@@ -69,6 +80,7 @@ export class System implements CoreSystem {
   public readonly transport: SystemTransport
   private closed = false
   private readonly lifetime = new AbortController()
+  private readonly handles = new HandleRegistry()
 
   private constructor(home: string, address: string, private readonly connection: Socket) {
     this.home = home
@@ -92,10 +104,10 @@ export class System implements CoreSystem {
   }
 
   /** Atomically replace one runtime Program without touching its installed form. */
-  public async forceCreateProgram(source: ProgramDescription | string): Promise<SystemProgramEntity> {
+  public async forceCreateProgram(source: ProgramDefinition | string): Promise<SystemProgramEntity> {
     this.requireConnected()
     for await (const event of this.transport.lifecycle({ word: "force-create", program: source })) {
-      if (event.event === "created") return new ProgramHandle(this, required(event.program as ProgramSnapshot | undefined))
+      if (event.event === "created") return this.programHandle(required(event.program as ProgramSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Program")
   }
@@ -106,6 +118,7 @@ export class System implements CoreSystem {
     this.closed = true
     this.lifetime.abort(new Error("This System connection is closed"))
     this.connection.destroy()
+    this.handles.clear()
   }
 
   public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap>
@@ -115,6 +128,16 @@ export class System implements CoreSystem {
     return key.endpoint === "server"
       ? new ServerService(this, key as ServiceKey & { endpoint: "server" })
       : new ClientService(this, key as ServiceKey & { endpoint: "client" })
+  }
+
+  public programHandle(snapshot: ProgramSnapshot) {
+    const handle = this.handles.obtain(`program:${snapshot.reference}`, () => new ProgramHandle(this, snapshot))
+    handle.update(snapshot)
+    return handle
+  }
+
+  public processHandle(snapshot: ProcessSnapshot) {
+    return this.handles.obtain(`process:${snapshot.reference}`, () => new ProcessHandle(this, snapshot))
   }
 
   private signal(signal?: AbortSignal) {
@@ -160,7 +183,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
         input: { installedOnly: onlyInstalled, limit: 100, offset }
       }) as Page<ProgramSnapshot>
 
-      programs.push(...page.data.map(snapshot => new ProgramHandle(this.system, snapshot)))
+      programs.push(...page.data.map(snapshot => this.system.programHandle(snapshot)))
       offset += page.data.length
       if (!page.truncated || !page.data.length) return programs
     }
@@ -169,16 +192,16 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   public async find(identity: string) {
     try {
       const snapshot = await this.system.transport.control({ capability: "program", operation: "inspect", input: { program: identity } }) as ProgramSnapshot
-      return new ProgramHandle(this.system, snapshot)
+      return this.system.programHandle(snapshot)
     } catch (error) {
       if (unknown(error, "Program")) return null
       throw error
     }
   }
 
-  public async create(source: ProgramDescription | string) {
+  public async create(source: ProgramDefinition | string) {
     for await (const event of this.system.transport.lifecycle({ word: "create", program: source })) {
-      if (event.event === "created") return new ProgramHandle(this.system, required(event.program as ProgramSnapshot | undefined))
+      if (event.event === "created") return this.system.programHandle(required(event.program as ProgramSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Program")
   }
@@ -187,45 +210,54 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
     const waited = value as { event?: string, payload?: unknown }
     if (waited.event === "uninstall") {
       const payload = waited.payload as { program?: ProgramSnapshot, everythingRemoved?: boolean }
-      return { program: new ProgramHandle(this.system, required(payload.program)), everythingRemoved: payload.everythingRemoved === true }
+      return { program: this.system.programHandle(required(payload.program)), everythingRemoved: payload.everythingRemoved === true }
     }
-    return new ProgramHandle(this.system, required(waited.payload as ProgramSnapshot | undefined))
+    return this.system.programHandle(required(waited.payload as ProgramSnapshot | undefined))
   }
 }
 
-class ProgramHandle extends Events<ProgramEvents> implements SystemProgramEntity {
+interface ProgramHandle extends SystemProgramEntity {}
+
+class ProgramHandle extends ProgramBase {
   private readonly reference: string
   public readonly identity: string
-  public readonly name: string
-  public readonly version: string | null
-  public readonly description: string | null
-  public readonly hasAgent: boolean
-  public readonly server: EndpointDeclaration | null
-  public readonly client: ClientDeclaration | null
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
+  private snapshot: ProgramSnapshot
 
   public constructor(private readonly system: System, snapshot: ProgramSnapshot) {
-    super(["forget", "uninstall"], (event, signal, timeout) => system.transport.control({
+    super()
+    this.snapshot = snapshot
+    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, signal, timeout) => system.transport.control({
       capability: "program", operation: "wait", input: { program: snapshot.identity, event, timeout }
-    }, signal).then(value => (value as { payload?: unknown }).payload))
+    }, signal).then(value => (value as { payload?: unknown }).payload)))
     this.reference = snapshot.reference
     this.identity = snapshot.identity
-    this.name = snapshot.name
-    this.version = snapshot.version
-    this.description = snapshot.description
-    this.hasAgent = snapshot.hasAgent
-    this.server = snapshot.server ? Object.freeze({ start: snapshot.server.start }) : null
-    this.client = snapshot.client ? Object.freeze({
-      start: snapshot.client.start,
-      title: snapshot.client.title,
-      size: snapshot.client.size,
-      position: snapshot.client.position,
-      layer: snapshot.client.layer,
-      minimize: snapshot.client.minimize
-    }) : null
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
+  }
+
+  public get name() { return this.snapshot.name }
+  public get version() { return this.snapshot.version }
+  public get description() { return this.snapshot.description }
+  public get hasAgent() { return this.snapshot.hasAgent }
+  public get server(): EndpointDeclaration | null {
+    return this.snapshot.server ? Object.freeze({ start: this.snapshot.server.start }) : null
+  }
+  public get client(): ClientDeclaration | null {
+    return this.snapshot.client ? Object.freeze({
+      start: this.snapshot.client.start,
+      title: this.snapshot.client.title,
+      size: this.snapshot.client.size,
+      position: this.snapshot.client.position,
+      layer: this.snapshot.client.layer,
+      minimize: this.snapshot.client.minimize
+    }) : null
+  }
+
+  public update(snapshot: ProgramSnapshot) {
+    if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
+    this.snapshot = snapshot
   }
 
   public async agent() {
@@ -308,7 +340,7 @@ class ProgramProcesses extends Events<SystemProgramProcessEvents> {
       launch
     }, options.signal)) {
       if (event.event === "started") {
-        process = new ProcessHandle(this.system, required(event.process as ProcessSnapshot | undefined))
+        process = this.system.processHandle(required(event.process as ProcessSnapshot | undefined))
         yield Object.freeze({ event: "started", process })
       } else if (event.event === "output") {
         if ((event.stream !== "stdout" && event.stream !== "stderr") || typeof event.text !== "string") {
@@ -347,7 +379,7 @@ class ProgramProcesses extends Events<SystemProgramProcessEvents> {
 
   private async createExact(word: "create-process" | "find-or-create-process", launch: Launch) {
     for await (const event of this.system.transport.lifecycle({ word, handle: this.program.address(), launch })) {
-      if (event.event === "createdProcess") return new ProcessHandle(this.system, required(event.process as ProcessSnapshot | undefined))
+      if (event.event === "createdProcess") return this.system.processHandle(required(event.process as ProcessSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Process")
   }
@@ -365,7 +397,7 @@ class ProcessRegistry extends Events<SystemProcessEvents> {
   public async find(identity: string) {
     try {
       const snapshot = await this.system.transport.control({ capability: "process", operation: "inspect", input: { process: identity } }) as ProcessSnapshot
-      return new ProcessHandle(this.system, snapshot)
+      return this.system.processHandle(snapshot)
     } catch (error) {
       if (unknown(error, "Process")) return null
       throw error
@@ -373,7 +405,9 @@ class ProcessRegistry extends Events<SystemProcessEvents> {
   }
 }
 
-class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemProcessEntity {
+interface ProcessHandle extends SystemProcessEntity {}
+
+class ProcessHandle extends ProcessBase {
   public readonly identity: string
   public readonly name: string | null
   public readonly startedAt: Date
@@ -381,9 +415,10 @@ class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemP
   public readonly client: ClientEndpoint
 
   public constructor(private readonly system: System, private readonly snapshot: ProcessSnapshot) {
-    super(["endpointStart", "endpointStop", "exit"], (event, signal, timeout) => system.transport.control({
+    super()
+    bindEvents(this, new Events<SystemProcessEntityEvents>(["endpointStart", "endpointStop", "exit"], (event, signal, timeout) => system.transport.control({
       capability: "process", operation: "wait", input: { process: snapshot.identity, event, timeout }
-    }, signal).then(value => processEvent(system, value)))
+    }, signal).then(value => processEvent(system, value))))
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
@@ -391,7 +426,7 @@ class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemP
     this.client = new ClientEndpoint(system, this)
   }
 
-  public program() { return new ProgramHandle(this.system, required(this.snapshot.programSnapshot, this.snapshot.program)) }
+  public program() { return this.system.programHandle(required(this.snapshot.programSnapshot, this.snapshot.program)) }
 
   public async exit() {
     await this.system.transport.control({ capability: "process", operation: "exit", input: { process: this.identity } })
@@ -400,10 +435,12 @@ class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemP
   public async exited() { return await this.system.process.find(this.identity) === null }
 }
 
-abstract class EndpointHandle extends Events<{}, unknown> implements SystemEndpointEntity {
-  public abstract readonly endpoint: "server" | "client"
-
-  public constructor(protected readonly system: System, protected readonly owner: ProcessHandle, endpoint: "server" | "client") {
+class EndpointOperations extends Events<{}, unknown> {
+  public constructor(
+    public readonly system: System,
+    public readonly owner: ProcessHandle,
+    public readonly endpoint: "server" | "client"
+  ) {
     super([], (event, signal, timeout) => event === null
       ? system.transport.api({ capability: "endpoint", operation: "wait", process: owner.identity, endpoint, event, timeout }, signal)
       : system.transport.control({
@@ -418,7 +455,7 @@ abstract class EndpointHandle extends Events<{}, unknown> implements SystemEndpo
     return value.running
   }
 
-  public async start() { await this.operation("start") }
+  public async start(client?: LaunchClient) { await this.operation("start", client) }
   public async stop() { await this.operation("stop") }
 
   public async service(): Promise<ServiceHandler | null> {
@@ -432,23 +469,36 @@ abstract class EndpointHandle extends Events<{}, unknown> implements SystemEndpo
     } })
   }
 
-  protected inspect() {
+  private inspect() {
     return this.system.transport.control({ capability: "endpoint", operation: "inspect", input: {
       process: this.owner.identity, endpoint: this.endpoint
     } }) as Promise<EndpointSnapshot>
   }
 
-  protected async operation(operation: "start" | "stop", client?: LaunchClient) {
+  private async operation(operation: "start" | "stop", client?: LaunchClient) {
     await this.system.transport.control({ capability: "endpoint", operation, input: {
       process: this.owner.identity, endpoint: this.endpoint, ...(client ? { client } : {})
     } })
   }
 }
 
-class ServerEndpoint extends EndpointHandle implements SystemServerEntity {
-  public readonly endpoint = "server" as const
+interface ServerEndpoint extends SystemServerEntity {}
 
-  public constructor(system: System, owner: ProcessHandle) { super(system, owner, "server") }
+class ServerEndpoint extends ServerBase {
+  public readonly endpoint = "server" as const
+  private readonly base: EndpointOperations
+
+  public constructor(private readonly system: System, private readonly owner: ProcessHandle) {
+    super()
+    this.base = new EndpointOperations(system, owner, "server")
+    bindEvents(this, this.base)
+  }
+
+  public process() { return this.base.process() }
+  public exists() { return this.base.exists() }
+  public start() { return this.base.start() }
+  public stop() { return this.base.stop() }
+  public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
 
   public async ask<Answer = unknown>(event: string, payload?: unknown) {
     return await this.system.transport.control({ capability: "endpoint", operation: "ask", input: {
@@ -466,24 +516,33 @@ class ServerEndpoint extends EndpointHandle implements SystemServerEntity {
     await this.system.transport.control({ capability: "endpoint", operation: "waitReady", input: { process: this.owner.identity, endpoint: "server", timeout } })
   }
 
-  public override async service<EventsMap extends object = {}>() {
-    return await super.service() as ServerService<EventsMap> | null
+  public async service<EventsMap extends object = {}>() {
+    return await this.base.service() as ServerService<EventsMap> | null
   }
 }
 
-class ClientEndpoint extends EndpointHandle implements SystemClientEntity {
+interface ClientEndpoint extends SystemClientEntity {}
+
+class ClientEndpoint extends ClientBase {
   public readonly endpoint = "client" as const
   public readonly window: SystemWindow
+  private readonly base: EndpointOperations
 
   public constructor(system: System, owner: ProcessHandle) {
-    super(system, owner, "client")
+    super()
+    this.base = new EndpointOperations(system, owner, "client")
+    bindEvents(this, this.base)
     this.window = new SystemWindow(system, owner)
   }
 
-  public override async start(overrides?: LaunchClient) { await this.operation("start", overrides) }
+  public process() { return this.base.process() }
+  public exists() { return this.base.exists() }
+  public start(overrides?: LaunchClient) { return this.base.start(overrides) }
+  public stop() { return this.base.stop() }
+  public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
 
-  public override async service<EventsMap extends object = {}>() {
-    return await super.service() as ClientService<EventsMap> | null
+  public async service<EventsMap extends object = {}>() {
+    return await this.base.service() as ClientService<EventsMap> | null
   }
 }
 
@@ -590,7 +649,7 @@ async function listProcesses(system: System, program?: string) {
   let offset = 0
   while (true) {
     const page = await system.transport.control({ capability: "process", operation: "list", input: { program, limit: 100, offset } }) as Page<ProcessSnapshot>
-    processes.push(...page.data.map(snapshot => new ProcessHandle(system, snapshot)))
+    processes.push(...page.data.map(snapshot => system.processHandle(snapshot)))
     offset += page.data.length
     if (!page.truncated || !page.data.length) return processes
   }
@@ -609,17 +668,21 @@ function processEvent(system: System, value: unknown): unknown {
   const waited = value as { event?: string, payload?: unknown }
   const payload = waited.payload as Record<string, unknown> | undefined
   if (waited.event === "exit" && payload) return {
-    process: new ProcessHandle(system, required(payload.processSnapshot as ProcessSnapshot | undefined, String(payload.process ?? ""))),
+    process: system.processHandle(required(payload.processSnapshot as ProcessSnapshot | undefined, String(payload.process ?? ""))),
     status: payload.status,
     code: payload.code,
     signal: payload.signal
   }
   if ((waited.event === "endpointStart" || waited.event === "endpointStop") && payload?.processSnapshot) {
-    const process = new ProcessHandle(system, payload.processSnapshot as ProcessSnapshot)
+    const process = system.processHandle(payload.processSnapshot as ProcessSnapshot)
     return payload.endpoint === "client" ? process.client : process.server
   }
-  if (payload && typeof payload.identity === "string") return new ProcessHandle(system, payload as unknown as ProcessSnapshot)
+  if (payload && typeof payload.identity === "string") return system.processHandle(payload as unknown as ProcessSnapshot)
   return payload
+}
+
+function bindEvents<Definitions extends object, Fallback>(target: object, events: Events<Definitions, Fallback>) {
+  Object.assign(target, eventsOf(events))
 }
 
 function eventsOf<Definitions extends object, Fallback>(events: Events<Definitions, Fallback>) {
@@ -651,6 +714,7 @@ interface ProgramSnapshot {
   client: ClientDeclaration | null
 }
 interface ProcessSnapshot {
+  reference: string
   identity: string
   name: string | null
   program: string
@@ -669,3 +733,18 @@ interface WindowSnapshot {
   layer: Awaited<ReturnType<Window["layer"]>>
   location: string
 }
+
+export type Program = SystemProgramEntity
+export const Program = CoreProgram
+
+export type Process = SystemProcessEntity
+export const Process = CoreProcess
+
+export type Endpoint<EventsMap extends object = {}> = SystemEndpointEntity<EventsMap>
+export const Endpoint = CoreEndpoint
+
+export type Server<EventsMap extends object = {}> = SystemServerEntity<EventsMap>
+export const Server = CoreServer
+
+export type Client<EventsMap extends object = {}> = SystemClientEntity<EventsMap>
+export const Client = CoreClient
