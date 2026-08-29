@@ -2,17 +2,17 @@ import type { ClientDevelopment } from "@phreshos/core"
 import { spawn, type ChildProcess } from "node:child_process"
 import { connect } from "node:net"
 import { delimiter, join } from "node:path"
-import type { GatewayEvent } from "./transport.js"
+import type { TransportEvent } from "./transport.js"
 
 const readinessTimeout = 15_000
 const pollingInterval = 200
 const reportingInterval = 2_000
 const sandboxedClientOrigin = "null"
 
-/** One client development server owned by a Gateway development run. */
+/** One Client development server owned by a Project development run. */
 export class DevelopmentClient {
   private readonly child: ChildProcess
-  private readonly output: GatewayEvent[] = []
+  private readonly output: TransportEvent[] = []
   private stopped = false
   private result: CommandExit | null = null
   private outputWaiter: (() => void) | null = null
@@ -69,7 +69,7 @@ export class DevelopmentClient {
 
   public endingWasRequested() { return this.stopped }
 
-  private push(event: GatewayEvent) {
+  private push(event: TransportEvent) {
     this.output.push(event)
     this.outputWaiter?.()
     this.outputWaiter = null
@@ -128,7 +128,7 @@ export interface CommandExit {
   error: Error | null
 }
 
-function outputEvent(stream: "out" | "err", chunk: unknown): GatewayEvent {
+function outputEvent(stream: "out" | "err", chunk: unknown): TransportEvent {
   return { event: "output", source: "client-development", stream, text: String(chunk) }
 }
 

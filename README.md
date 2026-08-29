@@ -3,37 +3,39 @@
 The Node.js interface for a running PhreshOS System and local Program projects.
 
 ```ts
-import { Gateway, Project } from "@phreshos/node"
+import { Project, System } from "@phreshos/node"
 
 const project = await Project.open()
-const gateway = await Gateway.open()
+const system = await System.connect()
 
-for await (const event of gateway.install(project)) {
-  // installation progress
-}
+await project.install(system)
 
-// The complete transport-neutral System contract used by Server Programs.
-const programs = await gateway.system.program.list()
+// This is the same transport-neutral System contract used by Server Programs.
+const programs = await system.program.list()
 
-await gateway.close()
+await system.disconnect()
 ```
 
 `Project.open()` discovers `phresh.config.ts` from the current working
-directory by default. `Gateway.open()` resolves its home from an explicit
+directory by default. `System.connect()` resolves its home from an explicit
 argument, then `PHRESHOS_HOME`, then the current user's `.phreshos` directory.
 
 Project operations remain available without duplicating CLI logic:
 
 ```ts
 const project = await Project.open() // process.cwd()
-const gateway = await Gateway.open()
+const system = await System.connect()
 
 await project.pack()
-for await (const event of gateway.start(project)) { /* production run */ }
-for await (const event of gateway.dev(project)) { /* development run */ }
-for await (const event of gateway.install(project)) { /* installation */ }
+await project.start(system, { signal })
+await project.dev(system, { signal })
+await project.install(system)
+
+await system.disconnect()
 ```
 
-`start`, `dev`, and `install` expose ordered asynchronous event streams. The
-CLI only interprets arguments and presents those events; it does not implement
-a second Project or Gateway lifecycle.
+`Project` owns authoring concepts such as production builds and development
+Client servers. The lower-level System API stays composable: use
+`system.forceCreateProgram(description)` to replace one runtime Program, and
+`program.process.run(launch, { signal })` when one Process should live exactly
+as long as its asynchronous iterator.

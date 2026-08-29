@@ -8,67 +8,126 @@ import {
   type Launch,
   type LaunchClient,
   type Position,
+  type ProgramDescription,
   type ProgramEvents,
   type ProgramCommandChunk,
   type ServerServiceChannel,
   type ServiceHandler,
   type ServiceKey,
   type Size,
-  type System,
+  type System as CoreSystem,
   type SystemClientEntity,
   type SystemEndpointEntity,
   type SystemProcessEntity,
   type SystemProcessEntityEvents,
   type SystemProcessEvents,
+  type SystemProcess,
+  type SystemProgram,
   type SystemProgramEntity,
   type SystemProgramEvents,
   type SystemProgramProcessEvents,
   type SystemServerEntity,
+  type SystemUploads,
+  type WritableAppearance,
   type Window,
   type WindowEvents,
   type WindowGeometry
 } from "@phreshos/core"
+import type { Socket } from "node:net"
 import { homedir } from "node:os"
+import { gatewayAddress } from "./address.js"
 import Events from "./events.js"
+import { resolveHome } from "./home.js"
 import { filesystemStorage } from "./storage.js"
-import type { GatewayEvent } from "./transport.js"
+import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
-export interface SystemTransport {
+export type ProgramProcessRunOptions = Readonly<{
+  signal?: AbortSignal
+}>
+
+export type ProgramProcessRunEvent =
+  | Readonly<{ event: "started", process: SystemProcessEntity }>
+  | (Readonly<{ event: "output" }> & ProgramCommandChunk)
+  | Readonly<{ event: "exited", process: SystemProcessEntity, exit: import("@phreshos/core").Exit }>
+
+interface SystemTransport {
   control(request: object, signal?: AbortSignal): Promise<unknown>
   api(request: object, signal?: AbortSignal): Promise<unknown>
-  lifecycle(request: object, signal?: AbortSignal): AsyncGenerator<GatewayEvent, void, void>
+  lifecycle(request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
 }
 
-/** Build the exact shared System contract over an owner-local Gateway transport. */
-export function gatewaySystem(transport: SystemTransport): System {
-  return new GatewaySystem(transport)
-}
-
-class GatewaySystem implements System {
+/** One connected owner-local implementation of the shared System contract. */
+export class System implements CoreSystem {
+  public readonly home: string
+  public readonly address: string
   public readonly storage = filesystemStorage(homedir(), "the native home directory")
-  public readonly appearance: GatewayAppearance
-  public readonly program: ProgramRegistry
-  public readonly process: ProcessRegistry
-  public readonly uploads: Uploads
+  public readonly appearance: WritableAppearance
+  public readonly program: SystemProgram
+  public readonly process: SystemProcess
+  public readonly uploads: SystemUploads
+  public readonly transport: SystemTransport
+  private closed = false
+  private readonly lifetime = new AbortController()
 
-  public constructor(public readonly transport: SystemTransport) {
-    this.appearance = new GatewayAppearance(transport)
+  private constructor(home: string, address: string, private readonly connection: Socket) {
+    this.home = home
+    this.address = address
+    this.transport = {
+      control: (value, signal) => request(address, "system", value, this.signal(signal)),
+      api: (value, signal) => request(address, "api", value, this.signal(signal)),
+      lifecycle: (value, signal) => streamProgram(address, value, this.signal(signal))
+    }
+    this.appearance = new SystemAppearance(this.transport)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
-    this.uploads = new Uploads(request => transport.api(request))
+    this.uploads = new Uploads(value => this.transport.api(value))
+  }
+
+  /** Connect to the System selected by argument, environment, or owner default. */
+  public static async connect(home?: string) {
+    const resolved = resolveHome(home)
+    const address = gatewayAddress(resolved)
+    return new System(resolved, address, await openConnection(address))
+  }
+
+  /** Atomically replace one runtime Program without touching its installed form. */
+  public async forceCreateProgram(source: ProgramDescription | string): Promise<SystemProgramEntity> {
+    this.requireConnected()
+    for await (const event of this.transport.lifecycle({ word: "force-create", program: source })) {
+      if (event.event === "created") return new ProgramHandle(this, required(event.program as ProgramSnapshot | undefined))
+    }
+    throw new Error("The System did not confirm the created Program")
+  }
+
+  /** Close this owner connection and abort every attached operation it owns. */
+  public async disconnect() {
+    if (this.closed) return
+    this.closed = true
+    this.lifetime.abort(new Error("This System connection is closed"))
+    this.connection.destroy()
   }
 
   public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap>
   public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap>
   public service(key: ServiceKey): ServiceHandler {
+    this.requireConnected()
     return key.endpoint === "server"
       ? new ServerService(this, key as ServiceKey & { endpoint: "server" })
       : new ClientService(this, key as ServiceKey & { endpoint: "client" })
   }
+
+  private signal(signal?: AbortSignal) {
+    this.requireConnected()
+    return signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal
+  }
+
+  private requireConnected() {
+    if (this.closed) throw new Error("This System connection is closed")
+  }
 }
 
-class GatewayAppearance extends Events<{ change: Appearance }> {
+class SystemAppearance extends Events<{ change: Appearance }> {
   public constructor(private readonly transport: SystemTransport) {
     super(["change"], (_event, signal) => transport.api({ capability: "appearance", operation: "wait" }, signal))
   }
@@ -83,7 +142,7 @@ class GatewayAppearance extends Events<{ change: Appearance }> {
 }
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
-  public constructor(private readonly system: GatewaySystem) {
+  public constructor(private readonly system: System) {
     super(["create", "forget", "install", "uninstall"], (event, signal, timeout) => (
       system.transport.control({ capability: "program", operation: "wait", input: { event, timeout } }, signal)
         .then(value => this.event(value))
@@ -117,15 +176,11 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
     }
   }
 
-  public async create(source: object | string) {
-    let identity: string | null = null
+  public async create(source: ProgramDescription | string) {
     for await (const event of this.system.transport.lifecycle({ word: "create", program: source })) {
-      if (event.event === "created") identity = String(event.identity)
+      if (event.event === "created") return new ProgramHandle(this.system, required(event.program as ProgramSnapshot | undefined))
     }
-    if (!identity) throw new Error("The System did not confirm the created Program")
-    const program = await this.find(identity)
-    if (!program) throw new Error("The created Program cannot be found")
-    return program
+    throw new Error("The System did not confirm the created Program")
   }
 
   private async event(value: unknown) {
@@ -139,6 +194,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
 }
 
 class ProgramHandle extends Events<ProgramEvents> implements SystemProgramEntity {
+  private readonly reference: string
   public readonly identity: string
   public readonly name: string
   public readonly version: string | null
@@ -147,11 +203,13 @@ class ProgramHandle extends Events<ProgramEvents> implements SystemProgramEntity
   public readonly server: EndpointDeclaration | null
   public readonly client: ClientDeclaration | null
   public readonly process: ProgramProcesses
+  public readonly startup: ProgramStartup
 
-  public constructor(private readonly system: GatewaySystem, snapshot: ProgramSnapshot) {
+  public constructor(private readonly system: System, snapshot: ProgramSnapshot) {
     super(["forget", "uninstall"], (event, signal, timeout) => system.transport.control({
       capability: "program", operation: "wait", input: { program: snapshot.identity, event, timeout }
     }, signal).then(value => (value as { payload?: unknown }).payload))
+    this.reference = snapshot.reference
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.version = snapshot.version
@@ -167,6 +225,7 @@ class ProgramHandle extends Events<ProgramEvents> implements SystemProgramEntity
       minimize: snapshot.client.minimize
     }) : null
     this.process = new ProgramProcesses(system, this)
+    this.startup = new ProgramStartup(system, this)
   }
 
   public async agent() {
@@ -176,21 +235,54 @@ class ProgramHandle extends Events<ProgramEvents> implements SystemProgramEntity
   }
 
   public async installed() {
-    const value = await this.system.transport.control({ capability: "program", operation: "inspect", input: { program: this.identity } }) as ProgramSnapshot
-    if (typeof value.installed !== "boolean") throw new Error("The System returned no Program installation state")
-    return value.installed
+    for await (const event of this.system.transport.lifecycle({ word: "installed", handle: this.address() })) {
+      if (event.event === "installedState") return event.installed === true
+    }
+    throw new Error("The System returned no Program installation state")
   }
 
-  public install() { return command(this.system, { word: "install-existing", identity: this.identity }) }
-  public uninstall(everything = false) { return command(this.system, { word: "uninstall-existing", identity: this.identity, everything }) }
+  public install() { return command(this.system, { word: "install-existing", handle: this.address() }) }
+  public uninstall(everything = false) { return command(this.system, { word: "uninstall-existing", handle: this.address(), everything }) }
 
   public async forget() {
-    for await (const _event of this.system.transport.lifecycle({ word: "forget", identity: this.identity })) { /* consume completion */ }
+    for await (const _event of this.system.transport.lifecycle({ word: "forget", handle: this.address() })) { /* consume completion */ }
+  }
+
+  public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
+}
+
+class ProgramStartup {
+  public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
+
+  public async get() {
+    for await (const event of this.system.transport.lifecycle({
+      word: "startup", handle: this.program.address(), operation: "get"
+    })) {
+      if (event.event === "startup") return event.launch as Launch | null
+    }
+    throw new Error("The System returned no Program startup state")
+  }
+
+  public async enable(launch: Launch = {}) {
+    await this.change("enable", launch)
+  }
+
+  public async disable() {
+    await this.change("disable")
+  }
+
+  private async change(operation: "enable" | "disable", launch?: Launch) {
+    for await (const event of this.system.transport.lifecycle({
+      word: "startup", handle: this.program.address(), operation, launch
+    })) {
+      if (event.event === "startup") return
+    }
+    throw new Error("The System did not confirm the Program startup change")
   }
 }
 
 class ProgramProcesses extends Events<SystemProgramProcessEvents> {
-  public constructor(private readonly system: GatewaySystem, private readonly program: ProgramHandle) {
+  public constructor(private readonly system: System, private readonly program: ProgramHandle) {
     super(["endpointStart", "endpointStop", "create", "exit"], (event, signal, timeout) => system.transport.control({
       capability: "process", operation: "wait", input: { program: program.identity, event, timeout }
     }, signal).then(value => processEvent(system, value)))
@@ -205,18 +297,64 @@ class ProgramProcesses extends Events<SystemProgramProcessEvents> {
     return found ?? null
   }
 
-  public create(launch: Launch = {}) { return createProcess(this.system, "create", this.program.identity, launch) }
-  public findOrCreate(launch: Launch & { name: string }) { return createProcess(this.system, "findOrCreate", this.program.identity, launch) }
+  public create(launch: Launch = {}) { return this.createExact("create-process", launch) }
+
+  public async *run(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
+    let process: ProcessHandle | null = null
+
+    for await (const event of this.system.transport.lifecycle({
+      word: "run-process",
+      handle: this.program.address(),
+      launch
+    }, options.signal)) {
+      if (event.event === "started") {
+        process = new ProcessHandle(this.system, required(event.process as ProcessSnapshot | undefined))
+        yield Object.freeze({ event: "started", process })
+      } else if (event.event === "output") {
+        if ((event.stream !== "stdout" && event.stream !== "stderr") || typeof event.text !== "string") {
+          throw new Error("The System returned an invalid Process output event")
+        }
+        yield Object.freeze({
+          event: "output",
+          stream: event.stream,
+          text: event.text
+        })
+      } else if (event.event === "exited") {
+        if (!process) throw new Error("The System ended a Process before confirming its start")
+        const value = event.exit as { status?: unknown, code?: unknown, signal?: unknown } | undefined
+        if (!value
+          || (value.status !== "exited" && value.status !== "signaled")
+          || (value.code !== null && typeof value.code !== "number")
+          || (value.signal !== null && typeof value.signal !== "string")) {
+          throw new Error("The System returned an invalid Process exit event")
+        }
+        const exit = Object.freeze({
+          status: value.status,
+          code: value.code,
+          signal: value.signal
+        })
+        yield Object.freeze({ event: "exited", process, exit })
+      } else throw new Error("The System returned an unknown Process run event")
+    }
+  }
+  public findOrCreate(launch: Launch & { name: string }) { return this.createExact("find-or-create-process", launch) }
 
   public async exitAll() {
     const processes = await this.list()
     await Promise.all(processes.map(process => process.exit()))
     return processes.map(process => process.identity)
   }
+
+  private async createExact(word: "create-process" | "find-or-create-process", launch: Launch) {
+    for await (const event of this.system.transport.lifecycle({ word, handle: this.program.address(), launch })) {
+      if (event.event === "createdProcess") return new ProcessHandle(this.system, required(event.process as ProcessSnapshot | undefined))
+    }
+    throw new Error("The System did not confirm the created Process")
+  }
 }
 
 class ProcessRegistry extends Events<SystemProcessEvents> {
-  public constructor(private readonly system: GatewaySystem) {
+  public constructor(private readonly system: System) {
     super(["endpointStart", "endpointStop", "create", "exit"], (event, signal, timeout) => system.transport.control({
       capability: "process", operation: "wait", input: { event, timeout }
     }, signal).then(value => processEvent(system, value)))
@@ -242,7 +380,7 @@ class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemP
   public readonly server: ServerEndpoint
   public readonly client: ClientEndpoint
 
-  public constructor(private readonly system: GatewaySystem, private readonly snapshot: ProcessSnapshot) {
+  public constructor(private readonly system: System, private readonly snapshot: ProcessSnapshot) {
     super(["endpointStart", "endpointStop", "exit"], (event, signal, timeout) => system.transport.control({
       capability: "process", operation: "wait", input: { process: snapshot.identity, event, timeout }
     }, signal).then(value => processEvent(system, value)))
@@ -265,7 +403,7 @@ class ProcessHandle extends Events<SystemProcessEntityEvents> implements SystemP
 abstract class EndpointHandle extends Events<{}, unknown> implements SystemEndpointEntity {
   public abstract readonly endpoint: "server" | "client"
 
-  public constructor(protected readonly system: GatewaySystem, protected readonly owner: ProcessHandle, endpoint: "server" | "client") {
+  public constructor(protected readonly system: System, protected readonly owner: ProcessHandle, endpoint: "server" | "client") {
     super([], (event, signal, timeout) => event === null
       ? system.transport.api({ capability: "endpoint", operation: "wait", process: owner.identity, endpoint, event, timeout }, signal)
       : system.transport.control({
@@ -310,7 +448,7 @@ abstract class EndpointHandle extends Events<{}, unknown> implements SystemEndpo
 class ServerEndpoint extends EndpointHandle implements SystemServerEntity {
   public readonly endpoint = "server" as const
 
-  public constructor(system: GatewaySystem, owner: ProcessHandle) { super(system, owner, "server") }
+  public constructor(system: System, owner: ProcessHandle) { super(system, owner, "server") }
 
   public async ask<Answer = unknown>(event: string, payload?: unknown) {
     return await this.system.transport.control({ capability: "endpoint", operation: "ask", input: {
@@ -335,11 +473,11 @@ class ServerEndpoint extends EndpointHandle implements SystemServerEntity {
 
 class ClientEndpoint extends EndpointHandle implements SystemClientEntity {
   public readonly endpoint = "client" as const
-  public readonly window: GatewayWindow
+  public readonly window: SystemWindow
 
-  public constructor(system: GatewaySystem, owner: ProcessHandle) {
+  public constructor(system: System, owner: ProcessHandle) {
     super(system, owner, "client")
-    this.window = new GatewayWindow(system, owner)
+    this.window = new SystemWindow(system, owner)
   }
 
   public override async start(overrides?: LaunchClient) { await this.operation("start", overrides) }
@@ -349,8 +487,8 @@ class ClientEndpoint extends EndpointHandle implements SystemClientEntity {
   }
 }
 
-class GatewayWindow extends Events<WindowEvents> implements Window {
-  public constructor(private readonly system: GatewaySystem, private readonly process: ProcessHandle) {
+class SystemWindow extends Events<WindowEvents> implements Window {
+  public constructor(private readonly system: System, private readonly process: ProcessHandle) {
     super(["move", "resize", "geometry", "minimize", "changeTitle", "front"], (event, signal, timeout) => system.transport.control({
       capability: "window", operation: "wait", input: { process: process.identity, event, timeout }
     }, signal).then(value => (value as { payload?: unknown }).payload))
@@ -382,7 +520,7 @@ class GatewayWindow extends Events<WindowEvents> implements Window {
 class ServiceBase extends Events<{ enable: undefined, disable: undefined }> {
   public readonly name: string
 
-  public constructor(protected readonly system: GatewaySystem, protected readonly key: ServiceKey) {
+  public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
     super(["enable", "disable"], (event, signal, timeout) => system.transport.api({
       capability: "service", operation: "wait", scope: "lifecycle", key, event, timeout
     }, signal))
@@ -398,7 +536,7 @@ class ServerService<EventsMap extends object = {}> extends CoreServerServiceHand
   public override readonly channel: ServerServiceChannel<EventsMap>
   private readonly base: ServiceBase
 
-  public constructor(system: GatewaySystem, key: ServiceKey & { endpoint: "server" }) {
+  public constructor(system: System, key: ServiceKey & { endpoint: "server" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.name = key.name
@@ -415,7 +553,7 @@ class ClientService<EventsMap extends object = {}> extends CoreClientServiceHand
   public override readonly channel: ClientServiceChannel<EventsMap>
   private readonly base: ServiceBase
 
-  public constructor(system: GatewaySystem, key: ServiceKey & { endpoint: "client" }) {
+  public constructor(system: System, key: ServiceKey & { endpoint: "client" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.name = key.name
@@ -428,7 +566,7 @@ class ClientService<EventsMap extends object = {}> extends CoreClientServiceHand
 }
 
 class ClientServiceChannelHandle extends Events<{}, unknown> {
-  public constructor(protected readonly system: GatewaySystem, protected readonly key: ServiceKey) {
+  public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
     super([], (event, signal, timeout) => system.transport.api({ capability: "service", operation: "wait", scope: "channel", key, event, timeout }, signal))
   }
 }
@@ -447,7 +585,7 @@ class ServerServiceChannelHandle extends ClientServiceChannelHandle {
   }
 }
 
-async function listProcesses(system: GatewaySystem, program?: string) {
+async function listProcesses(system: System, program?: string) {
   const processes: ProcessHandle[] = []
   let offset = 0
   while (true) {
@@ -458,12 +596,7 @@ async function listProcesses(system: GatewaySystem, program?: string) {
   }
 }
 
-async function createProcess(system: GatewaySystem, operation: "create" | "findOrCreate", program: string, launch: Launch) {
-  const snapshot = await system.transport.control({ capability: "process", operation, input: { program, launch } }) as ProcessSnapshot
-  return new ProcessHandle(system, snapshot)
-}
-
-async function* command(system: GatewaySystem, request: object): AsyncGenerator<ProgramCommandChunk, void, void> {
+async function* command(system: System, request: object): AsyncGenerator<ProgramCommandChunk, void, void> {
   for await (const event of system.transport.lifecycle(request)) {
     if (event.event === "output") yield {
       stream: event.stream === "stderr" ? "stderr" : "stdout",
@@ -472,7 +605,7 @@ async function* command(system: GatewaySystem, request: object): AsyncGenerator<
   }
 }
 
-function processEvent(system: GatewaySystem, value: unknown): unknown {
+function processEvent(system: System, value: unknown): unknown {
   const waited = value as { event?: string, payload?: unknown }
   const payload = waited.payload as Record<string, unknown> | undefined
   if (waited.event === "exit" && payload) return {
@@ -507,6 +640,7 @@ function required<Value>(value: Value | undefined, identity = ""): Value {
 
 interface Page<Value> { data: Value[], total: number, truncated: boolean }
 interface ProgramSnapshot {
+  reference: string
   identity: string
   name: string
   version: string | null

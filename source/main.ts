@@ -1,5 +1,12 @@
 export { gatewayAddress } from "./address.js"
-export { Gateway, type InstallOptions, type RunOptions, type UninstallOptions } from "./gateway.js"
+export { System, type ProgramProcessRunEvent, type ProgramProcessRunOptions } from "./system.js"
 export { resolveHome } from "./home.js"
-export { Project, type Manifest, type PackedProject, type ProjectMode, type ProjectOptions } from "./project.js"
-export { type GatewayEvent } from "./transport.js"
+export {
+  Project,
+  type Manifest,
+  type PackedProject,
+  type ProjectMode,
+  type ProjectOptions,
+  type ProjectRunOptions,
+  type ProjectRunResult
+} from "./project.js"
