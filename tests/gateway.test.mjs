@@ -159,7 +159,11 @@ test("System.connect exposes the shared System contract over one owner-local add
 
   const system = await System.connect(home)
   try {
-    assert.equal(system.home, await realpath(home))
+    assert.equal("home" in system, false)
+    assert.equal("address" in system, false)
+    assert.equal("transport" in system, false)
+    assert.equal("programHandle" in system, false)
+    assert.equal("processHandle" in system, false)
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
 
     const serverService = system.service({ program: "example", endpoint: "server", name: "state" })
