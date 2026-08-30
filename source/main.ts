@@ -13,10 +13,8 @@ export {
 } from "./system.js"
 export {
   Service,
-  type ClientServiceChannel,
-  type ServerServiceChannel,
-  type ServiceChannel,
   type ServiceKey,
+  type ServiceLifecycle,
   type ServiceLifecycleEvents
 } from "@phreshos/core"
 export { resolveHome } from "./home.js"

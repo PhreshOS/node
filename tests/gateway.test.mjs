@@ -173,6 +173,8 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(serverService, sameServerService)
     assert(serverService instanceof Service)
     assert(serverService instanceof ServerService)
+    assert.equal("channel" in serverService, false)
+    assert.equal(typeof serverService.lifecycle.subscribe, "function")
     assert(clientService instanceof Service)
     assert(clientService instanceof ClientService)
   } finally {
@@ -282,6 +284,7 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal((await system.process.list())[0], started.value.process)
     assert.equal(await system.process.waitFor("create"), started.value.process)
     assert.equal(await system.process.waitFor("endpointStart"), started.value.process.server)
+    assert.equal(await started.value.process.server.lifecycle.waitFor("start"), undefined)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(iterator.next(), /cancelled by test/)

@@ -9,7 +9,8 @@ import {
   isServiceKey,
   type Appearance,
   type ClientDeclaration,
-  type ClientServiceChannel,
+  type EndpointLifecycle,
+  type EndpointLifecycleEvents,
   type EndpointDeclaration,
   type Launch,
   type LaunchClient,
@@ -17,9 +18,9 @@ import {
   type ProgramDefinition,
   type ProgramEvents,
   type ProgramCommandChunk,
-  type ServerServiceChannel,
   type Service,
   type ServiceKey,
+  type ServiceLifecycle,
   type Size,
   type System as CoreSystem,
   type SystemClientEntity,
@@ -462,6 +463,8 @@ class ProcessHandle extends ProcessBase {
 }
 
 class EndpointOperations extends Events<{}, unknown> {
+  public readonly lifecycle: EndpointLifecycle
+
   public constructor(
     public readonly system: System,
     public readonly owner: ProcessHandle,
@@ -472,6 +475,9 @@ class EndpointOperations extends Events<{}, unknown> {
       : transport(system).control({
         capability: "endpoint", operation: "wait", input: { process: owner.identity, endpoint, event, timeout }
       }, signal).then(value => (value as { payload?: unknown }).payload))
+    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, signal, timeout) => {
+      return waitEndpointLifecycle(system, owner, endpoint, event, signal, timeout)
+    })
   }
 
   public process() { return Promise.resolve(this.owner) }
@@ -512,11 +518,13 @@ interface ServerEndpoint extends SystemServerEntity {}
 
 class ServerEndpoint extends ServerBase {
   public readonly endpoint = "server" as const
+  public readonly lifecycle: EndpointLifecycle
   private readonly base: EndpointOperations
 
   public constructor(private readonly system: System, private readonly owner: ProcessHandle) {
     super()
     this.base = new EndpointOperations(system, owner, "server")
+    this.lifecycle = this.base.lifecycle
     bindEvents(this, this.base)
   }
 
@@ -551,12 +559,14 @@ interface ClientEndpoint extends SystemClientEntity {}
 
 class ClientEndpoint extends ClientBase {
   public readonly endpoint = "client" as const
+  public readonly lifecycle: EndpointLifecycle
   public readonly window: SystemWindow
   private readonly base: EndpointOperations
 
   public constructor(system: System, owner: ProcessHandle) {
     super()
     this.base = new EndpointOperations(system, owner, "client")
+    this.lifecycle = this.base.lifecycle
     bindEvents(this, this.base)
     this.window = new SystemWindow(system, owner)
   }
@@ -602,13 +612,14 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   }
 }
 
-class ServiceBase extends Events<{ enable: undefined, disable: undefined }> {
+class ServiceBase {
   public readonly name: string
+  public readonly lifecycle: ServiceLifecycle
 
   public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
-    super(["enable", "disable"], (event, signal, timeout) => transport(system).api({
+    this.lifecycle = new Events(["enable", "disable"], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "lifecycle", key, event, timeout
-    }, signal))
+    }, signal)) as unknown as ServiceLifecycle
     this.name = key.name
   }
 
@@ -623,19 +634,32 @@ export class ServerService<EventsMap extends object = {}> extends CoreServerServ
 
 class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<EventsMap> {
   public override readonly name: string
-  public override readonly channel: ServerServiceChannel<EventsMap>
+  public override readonly lifecycle: ServiceLifecycle
   private readonly base: ServiceBase
 
-  public constructor(system: System, key: ServiceKey & { endpoint: "server" }) {
+  public constructor(private readonly system: System, private readonly key: ServiceKey & { endpoint: "server" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.name = key.name
-    this.channel = new ServerServiceChannelHandle(system, key) as unknown as ServerServiceChannel<EventsMap>
-    Object.assign(this, eventsOf(this.base))
+    this.lifecycle = this.base.lifecycle
+    bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
+      capability: "service", operation: "wait", scope: "events", key, event, timeout
+    }, signal)))
   }
 
   public override enabled() { return this.base.enabled() }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
+  public override readonly publish = (event: string, payload?: unknown) => {
+    void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
+  }
+  public override async ask<Answer = unknown>(event: string, payload?: unknown) {
+    return await transport(this.system).api({ capability: "service", operation: "ask", key: this.key, event, payload }) as Answer
+  }
+  public override timeout(milliseconds: number) {
+    return { ask: <Answer = unknown>(event: string, payload?: unknown) => transport(this.system).api({
+      capability: "service", operation: "ask", key: this.key, event, payload, timeout: milliseconds
+    }) as Promise<Answer> }
+  }
 }
 
 /** Node-SDK handle for a Service provided by a Client Endpoint. */
@@ -645,39 +669,21 @@ export class ClientService<EventsMap extends object = {}> extends CoreClientServ
 
 class ClientServiceHandle<EventsMap extends object = {}> extends ClientService<EventsMap> {
   public override readonly name: string
-  public override readonly channel: ClientServiceChannel<EventsMap>
+  public override readonly lifecycle: ServiceLifecycle
   private readonly base: ServiceBase
 
   public constructor(system: System, key: ServiceKey & { endpoint: "client" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.name = key.name
-    this.channel = new ClientServiceChannelHandle(system, key) as unknown as ClientServiceChannel<EventsMap>
-    Object.assign(this, eventsOf(this.base))
+    this.lifecycle = this.base.lifecycle
+    bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
+      capability: "service", operation: "wait", scope: "events", key, event, timeout
+    }, signal)))
   }
 
   public override enabled() { return this.base.enabled() }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
-}
-
-class ClientServiceChannelHandle extends Events<{}, unknown> {
-  public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
-    super([], (event, signal, timeout) => transport(system).api({ capability: "service", operation: "wait", scope: "channel", key, event, timeout }, signal))
-  }
-}
-
-class ServerServiceChannelHandle extends ClientServiceChannelHandle {
-  public async ask<Answer = unknown>(event: string, payload?: unknown) {
-    return await transport(this.system).api({ capability: "service", operation: "ask", key: this.key, event, payload }) as Answer
-  }
-  public timeout(milliseconds: number) {
-    return { ask: <Answer = unknown>(event: string, payload?: unknown) => transport(this.system).api({
-      capability: "service", operation: "ask", key: this.key, event, payload, timeout: milliseconds
-    }) as Promise<Answer> }
-  }
-  public publish(event: string, payload?: unknown) {
-    void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
-  }
 }
 
 async function listProcesses(system: System, program?: string) {
@@ -697,6 +703,29 @@ async function* command(system: System, request: object): AsyncGenerator<Program
       stream: event.stream === "stderr" ? "stderr" : "stdout",
       text: String(event.text ?? "")
     }
+  }
+}
+
+async function waitEndpointLifecycle(
+  system: System,
+  owner: ProcessHandle,
+  endpoint: "server" | "client",
+  event: string | null,
+  signal: AbortSignal,
+  timeout = 10_000
+) {
+  if (event !== "start" && event !== "stop") throw new Error(`An Endpoint lifecycle has no "${event}" event`)
+  const processEventName = event === "start" ? "endpointStart" : "endpointStop"
+  const deadline = Date.now() + timeout
+
+  while (true) {
+    const value = await transport(system).control({
+      capability: "process",
+      operation: "wait",
+      input: { process: owner.identity, event: processEventName, timeout: Math.max(0, deadline - Date.now()) }
+    }, signal)
+    const changed = processEvent(system, value)
+    if (changed === owner[endpoint]) return undefined
   }
 }
 
@@ -725,8 +754,7 @@ function eventsOf<Definitions extends object, Fallback>(events: Events<Definitio
   return {
     subscribe: events.subscribe,
     waitFor: events.waitFor,
-    events: events.events,
-    observe: events.observe
+    events: events.events
   }
 }
 
