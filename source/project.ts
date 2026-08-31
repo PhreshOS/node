@@ -95,6 +95,7 @@ export class Project {
       ...server && { server: {
         location: resolve(this.directory, server.location),
         start: server.start,
+        service: server.service,
         installCommand: config.server?.installCommand,
         uninstallCommand: config.server?.uninstallCommand,
         ...serverExecution(server)
@@ -102,6 +103,7 @@ export class Project {
       ...client && { client: {
         location: /^https?:\/\//i.test(client.location) ? client.location : resolve(this.directory, client.location),
         start: client.start,
+        service: client.service,
         title: config.client?.title,
         size: config.client?.size,
         position: config.client?.position,
@@ -256,6 +258,7 @@ function validateConfig(config: Config) {
     if (!declared) continue
     if (typeof declared.location !== "string") throw new Error(`A declared ${half} half must have a location`)
     if (declared.start !== undefined && typeof declared.start !== "boolean") throw new Error(`A declared ${half} Endpoint's start default must be true or false`)
+    if (declared.service !== undefined && typeof declared.service !== "boolean") throw new Error(`A declared ${half} Endpoint's service default must be true or false`)
   }
 
   if (!(config.server && (config.server.start ?? true)) && !(config.client && (config.client.start ?? true))) {
@@ -322,6 +325,7 @@ function packageDefinition(config: Config, version: string) {
     ...config.server && { server: {
       location: "server",
       start: config.server.start,
+      service: config.server.service,
       installCommand: config.server.installCommand,
       uninstallCommand: config.server.uninstallCommand,
       ...serverExecution(config.server)
@@ -329,6 +333,7 @@ function packageDefinition(config: Config, version: string) {
     ...config.client && { client: {
       location: "client",
       start: config.client.start,
+      service: config.client.service,
       title: config.client.title,
       size: config.client.size,
       position: config.client.position,

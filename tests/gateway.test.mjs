@@ -49,6 +49,7 @@ test("Project derives one Server execution mode without retaining the other", ()
   assert.deepEqual(project.productionDefinition().server, {
     location: join(directory, "dist", "server"),
     start: undefined,
+    service: undefined,
     installCommand: undefined,
     uninstallCommand: undefined,
     entryFile: "main.js"
@@ -56,6 +57,7 @@ test("Project derives one Server execution mode without retaining the other", ()
   assert.deepEqual(project.developmentDefinition().server, {
     location: directory,
     start: undefined,
+    service: undefined,
     installCommand: undefined,
     uninstallCommand: undefined,
     startCommand: "tsx source/server/main.ts"
@@ -166,17 +168,27 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal("processHandle" in system, false)
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
 
-    const serverService = system.service({ program: "example", endpoint: "server", name: "state" })
-    const sameServerService = system.service({ program: "example", endpoint: "server", name: "state" })
-    const clientService = system.service({ program: "example", endpoint: "client", name: "state" })
+    const serverService = system.service({ program: "example", process: "main", endpoint: "server" })
+    const sameServerService = system.service({ program: "example", process: "main", endpoint: "server" })
+    const clientService = system.service({ program: "example", process: "main", endpoint: "client" })
+    const exactService = system.service({ process: "1f4b222c-25d7-4ba8-85e5-d5e59cfe0928", endpoint: "server" })
 
     assert.equal(serverService, sameServerService)
+    assert.equal(exactService, system.service({ process: "1f4b222c-25d7-4ba8-85e5-d5e59cfe0928", endpoint: "server" }))
+    assert.throws(() => system.service({ process: "main", endpoint: "server" }), /complete service key/)
     assert(serverService instanceof Service)
     assert(serverService instanceof ServerService)
     assert.equal("channel" in serverService, false)
+    assert.equal("name" in serverService, false)
+    assert.equal(typeof serverService.exists, "function")
+    assert.equal(typeof serverService.publish, "function")
+    assert.equal(typeof serverService.waitReady, "function")
     assert.equal(typeof serverService.lifecycle.subscribe, "function")
     assert(clientService instanceof Service)
     assert(clientService instanceof ClientService)
+    assert.equal(typeof clientService.exists, "function")
+    assert.equal(typeof clientService.publish, "function")
+    assert.equal("waitReady" in clientService, false)
   } finally {
     await system.disconnect()
     await new Promise(resolve => server.close(resolve))
@@ -197,7 +209,7 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     version: null,
     description: null,
     hasAgent: false,
-    server: { start: true },
+    server: { start: true, service: false },
     client: null
   }
   const replacement = { ...program, reference: "replacement-reference" }

@@ -13,14 +13,14 @@ import {
   type EndpointLifecycleEvents,
   type EndpointDeclaration,
   type Launch,
-  type LaunchClient,
+  type ClientLaunch,
+  type ServerLaunch,
   type Position,
   type ProgramDefinition,
   type ProgramEvents,
   type ProgramCommandChunk,
   type Service,
   type ServiceKey,
-  type ServiceLifecycle,
   type Size,
   type System as CoreSystem,
   type SystemClientEntity,
@@ -137,8 +137,12 @@ export class System implements CoreSystem {
     requireConnected(this)
     if (!isServiceKey(key)) throw new Error("A complete service key is required")
 
-    const normalized = Object.freeze({ program: key.program, endpoint: key.endpoint, name: key.name })
-    const identity = JSON.stringify([normalized.program, normalized.endpoint, normalized.name])
+    const normalized = Object.freeze({
+      ...(key.program === undefined ? {} : { program: key.program }),
+      process: key.process,
+      endpoint: key.endpoint
+    })
+    const identity = JSON.stringify([key.program ?? null, key.process, key.endpoint])
 
     return systemState(this).handles.obtain(`service:${identity}`, () => normalized.endpoint === "server"
       ? new ServerServiceHandle(this, normalized as ServiceKey & { endpoint: "server" })
@@ -269,11 +273,15 @@ class ProgramHandle extends ProgramBase {
   public get description() { return this.snapshot.description }
   public get hasAgent() { return this.snapshot.hasAgent }
   public get server(): EndpointDeclaration | null {
-    return this.snapshot.server ? Object.freeze({ start: this.snapshot.server.start }) : null
+    return this.snapshot.server ? Object.freeze({
+      start: this.snapshot.server.start,
+      service: this.snapshot.server.service
+    }) : null
   }
   public get client(): ClientDeclaration | null {
     return this.snapshot.client ? Object.freeze({
       start: this.snapshot.client.start,
+      service: this.snapshot.client.service,
       title: this.snapshot.client.title,
       size: this.snapshot.client.size,
       position: this.snapshot.client.position,
@@ -487,12 +495,13 @@ class EndpointOperations extends Events<{}, unknown> {
     return value.running
   }
 
-  public async start(client?: LaunchClient) { await this.operation("start", client) }
+  public async start(launch: ServerLaunch | ClientLaunch = {}) { await this.operation("start", launch) }
   public async stop() { await this.operation("stop") }
 
-  public async service(): Promise<Service | null> {
-    const key = await transport(this.system).api({ capability: "endpoint", operation: "service", process: this.owner.identity, endpoint: this.endpoint }) as ServiceKey | null
-    return key ? this.system.service(key as never) : null
+  public async isService() {
+    return await transport(this.system).api({
+      capability: "endpoint", operation: "isService", process: this.owner.identity, endpoint: this.endpoint
+    }) as boolean
   }
 
   public publish(event: string, payload?: unknown) {
@@ -507,9 +516,9 @@ class EndpointOperations extends Events<{}, unknown> {
     } }) as Promise<EndpointSnapshot>
   }
 
-  private async operation(operation: "start" | "stop", client?: LaunchClient) {
+  private async operation(operation: "start" | "stop", launch?: ServerLaunch | ClientLaunch) {
     await transport(this.system).control({ capability: "endpoint", operation, input: {
-      process: this.owner.identity, endpoint: this.endpoint, ...(client ? { client } : {})
+      process: this.owner.identity, endpoint: this.endpoint, ...(launch ? { launch } : {})
     } })
   }
 }
@@ -530,7 +539,8 @@ class ServerEndpoint extends ServerBase {
 
   public process() { return this.base.process() }
   public exists() { return this.base.exists() }
-  public start() { return this.base.start() }
+  public isService() { return this.base.isService() }
+  public start(launch?: ServerLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
   public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
 
@@ -550,9 +560,6 @@ class ServerEndpoint extends ServerBase {
     await transport(this.system).control({ capability: "endpoint", operation: "waitReady", input: { process: this.owner.identity, endpoint: "server", timeout } })
   }
 
-  public async service<EventsMap extends object = {}>() {
-    return await this.base.service() as ServerService<EventsMap> | null
-  }
 }
 
 interface ClientEndpoint extends SystemClientEntity {}
@@ -573,13 +580,11 @@ class ClientEndpoint extends ClientBase {
 
   public process() { return this.base.process() }
   public exists() { return this.base.exists() }
-  public start(overrides?: LaunchClient) { return this.base.start(overrides) }
+  public isService() { return this.base.isService() }
+  public start(launch?: ClientLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
   public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
 
-  public async service<EventsMap extends object = {}>() {
-    return await this.base.service() as ClientService<EventsMap> | null
-  }
 }
 
 class SystemWindow extends Events<WindowEvents> implements Window {
@@ -613,18 +618,19 @@ class SystemWindow extends Events<WindowEvents> implements Window {
 }
 
 class ServiceBase {
-  public readonly name: string
-  public readonly lifecycle: ServiceLifecycle
+  public readonly lifecycle: EndpointLifecycle
 
   public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
-    this.lifecycle = new Events(["enable", "disable"], (event, signal, timeout) => transport(system).api({
+    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "lifecycle", key, event, timeout
-    }, signal)) as unknown as ServiceLifecycle
-    this.name = key.name
+    }, signal))
   }
 
-  public async enabled() { return await transport(this.system).api({ capability: "service", operation: "enabled", key: this.key }) as boolean }
-  public async waitReady(timeout?: number) { await transport(this.system).api({ capability: "service", operation: "waitReady", key: this.key, timeout }) }
+  public async exists() { return await transport(this.system).api({ capability: "service", operation: "exists", key: this.key }) as boolean }
+
+  public publish(event: string, payload?: unknown) {
+    void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
+  }
 }
 
 /** Node-SDK handle for a Service provided by a Server Endpoint. */
@@ -633,25 +639,23 @@ export class ServerService<EventsMap extends object = {}> extends CoreServerServ
 }
 
 class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<EventsMap> {
-  public override readonly name: string
-  public override readonly lifecycle: ServiceLifecycle
+  public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
   public constructor(private readonly system: System, private readonly key: ServiceKey & { endpoint: "server" }) {
     super()
     this.base = new ServiceBase(system, key)
-    this.name = key.name
     this.lifecycle = this.base.lifecycle
     bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "events", key, event, timeout
     }, signal)))
   }
 
-  public override enabled() { return this.base.enabled() }
-  public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
-  public override readonly publish = (event: string, payload?: unknown) => {
-    void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
+  public override exists() { return this.base.exists() }
+  public override async waitReady(timeout?: number) {
+    await transport(this.system).api({ capability: "service", operation: "waitReady", key: this.key, timeout })
   }
+  public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
     return await transport(this.system).api({ capability: "service", operation: "ask", key: this.key, event, payload }) as Answer
   }
@@ -668,22 +672,20 @@ export class ClientService<EventsMap extends object = {}> extends CoreClientServ
 }
 
 class ClientServiceHandle<EventsMap extends object = {}> extends ClientService<EventsMap> {
-  public override readonly name: string
-  public override readonly lifecycle: ServiceLifecycle
+  public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
   public constructor(system: System, key: ServiceKey & { endpoint: "client" }) {
     super()
     this.base = new ServiceBase(system, key)
-    this.name = key.name
     this.lifecycle = this.base.lifecycle
     bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "events", key, event, timeout
     }, signal)))
   }
 
-  public override enabled() { return this.base.enabled() }
-  public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
+  public override exists() { return this.base.exists() }
+  public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
 
 async function listProcesses(system: System, program?: string) {
@@ -778,7 +780,7 @@ interface ProgramSnapshot {
   description: string | null
   installed?: boolean
   hasAgent: boolean
-  server: { start: boolean } | null
+  server: EndpointDeclaration | null
   client: ClientDeclaration | null
 }
 interface ProcessSnapshot {
@@ -788,10 +790,10 @@ interface ProcessSnapshot {
   program: string
   programSnapshot?: ProgramSnapshot
   startedAt: string
-  server: { declared: boolean, running: boolean }
-  client: { declared: boolean, running: boolean }
+  server: { declared: boolean, running: boolean, service: boolean }
+  client: { declared: boolean, running: boolean, service: boolean }
 }
-interface EndpointSnapshot { running: boolean }
+interface EndpointSnapshot { running: boolean, service: boolean }
 interface WindowSnapshot {
   title: string
   position: Position
