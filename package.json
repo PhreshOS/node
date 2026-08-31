@@ -1,6 +1,6 @@
 {
   "name": "@phreshos/node",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
@@ -11,7 +11,11 @@
       "default": "./dist/main.js"
     }
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "author": "Zohayr SLILEH",
   "license": "MIT",
   "repository": {
