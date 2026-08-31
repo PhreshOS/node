@@ -1,6 +1,6 @@
 {
   "name": "@phreshos/node",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
@@ -36,7 +36,7 @@
     "prepack": "node --run build"
   },
   "dependencies": {
-    "@phreshos/core": "^0.1.27",
+    "@phreshos/core": "^0.1.29",
     "adm-zip": "^0.6.0",
     "jiti": "^2.7.0"
   },
