@@ -7,14 +7,22 @@ import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 
-/** Create one filesystem implementation bounded beneath an absolute root. */
-export function filesystemStorage(root: string, label: string): Storage {
-  if (!isAbsolute(root)) throw new Error("A Storage root must be absolute")
+/** Create one filesystem implementation bounded beneath a resolved absolute root. */
+export function filesystemStorage(source: string | (() => Promise<string>), label: string): Storage {
+  let root: Promise<string> | null = null
 
-  const resolve = (...parts: string[]) => contained(root, parts)
+  const resolveRoot = () => {
+    if (!root) root = Promise.resolve(typeof source === "string" ? source : source()).then(value => {
+      if (!isAbsolute(value)) throw new Error("A Storage root must be absolute")
+      return value
+    })
+    return root
+  }
+
+  const resolve = async (...parts: string[]) => contained(await resolveRoot(), parts)
 
   async function stream(...parts: [string, ...string[]]) {
-    const destination = resolve(...parts)
+    const destination = await resolve(...parts)
     const found = describe(destination)
     if (!found) throw new Error(`There is no ${parts.join("/")} in ${label}`)
     if (found.kind !== "file") throw new Error(`${parts.join("/")} is not a file`)
@@ -23,7 +31,7 @@ export function filesystemStorage(root: string, label: string): Storage {
 
   async function write(...args: [...path: [string, ...string[]], value: unknown]) {
     const parts = args.slice(0, -1) as string[]
-    const destination = resolve(...parts)
+    const destination = await resolve(...parts)
     const temporary = join(dirname(destination), `.${randomUUID()}.writing`)
     mkdirSync(dirname(destination), { recursive: true })
 
@@ -45,14 +53,14 @@ export function filesystemStorage(root: string, label: string): Storage {
     async text(...parts) { return new Response(await stream(...parts)).text() },
     async json<Value>(...parts: [string, ...string[]]) { return JSON.parse(await new Response(await stream(...parts)).text()) as Value },
     write,
-    async stat(...parts) { return describe(resolve(...parts)) },
-    async list(...parts) { return readdirSync(resolve(...parts)).sort() },
+    async stat(...parts) { return describe(await resolve(...parts)) },
+    async list(...parts) { return readdirSync(await resolve(...parts)).sort() },
     async delete(...parts) {
       if (!parts.length) throw new Error("Emptying a place is clear, not delete")
-      rmSync(resolve(...parts), { recursive: true, force: true })
+      rmSync(await resolve(...parts), { recursive: true, force: true })
     },
     async clear(...parts) {
-      const destination = resolve(...parts)
+      const destination = await resolve(...parts)
       const found = describe(destination)
       if (found && found.kind !== "directory") throw new Error("Only a Storage directory can be cleared")
       rmSync(destination, { recursive: true, force: true })

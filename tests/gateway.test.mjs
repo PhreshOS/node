@@ -219,6 +219,8 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     name: null,
     program: program.identity,
     programSnapshot: program,
+    parent: null,
+    options: { mode: "test" },
     startedAt: new Date().toISOString(),
     server: { declared: true, running: true },
     client: { declared: false, running: false }
@@ -259,6 +261,40 @@ test("a Process run is addressed to the exact Program and follows its signal", a
           event: envelope.request.input.event,
           payload: null
         } })}\n`)
+      } else if (envelope.target === "api" && envelope.request.capability === "program") {
+        const request = envelope.request
+        const result = request.operation === "storagePath"
+          ? join(home, request.area)
+          : request.operation === "icon"
+            ? [137, 80, 78, 71]
+            : request.operation === "store" && request.storeOperation === "get"
+              ? "stored"
+              : request.operation === "query"
+                ? [{ value: 1 }]
+                : true
+        socket.end(`${JSON.stringify({ success: true, result })}\n`)
+      } else if (envelope.target === "api" && envelope.request.capability === "traffic") {
+        const request = envelope.request
+        const endpoint = request.kind === "ask" ? "server" : "client"
+        const reference = {
+          kind: endpoint,
+          process: {
+            reference: process.reference,
+            identity: process.identity,
+            name: process.name,
+            program,
+            options: process.options,
+            startedAt: process.startedAt,
+            server: { service: false },
+            client: { service: false }
+          }
+        }
+        const values = request.kind === "publish"
+          ? [{ to: reference, payload: { value: 1 } }]
+          : request.kind === "ask"
+            ? ["question-identity", { to: reference, payload: { value: 2 } }]
+            : ["question-identity", { to: reference, outcome: { success: true, value: 3 } }]
+        socket.end(`${JSON.stringify({ success: true, result: { event: request.event ?? "trace", values } })}\n`)
       }
     })
     socket.on("close", () => { if (running) closeRun() })
@@ -293,6 +329,35 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(started.value.process.client instanceof Client, true)
     assert.equal(started.value.process.client instanceof Endpoint, true)
     assert.equal(await started.value.process.server.process(), started.value.process)
+    assert.equal(typeof created.data.text, "function")
+    assert.equal(typeof created.cache.clear, "function")
+    assert.equal(typeof created.store.get, "function")
+    assert.equal(typeof created.logs.query, "function")
+    assert.equal(typeof created.database.query, "function")
+    assert.equal((await created.icon()).type, "image/png")
+    await created.data.write("state.txt", "canonical")
+    assert.equal(await created.data.text("state.txt"), "canonical")
+    assert.equal(await created.store.get("state"), "stored")
+    assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
+    assert.equal(await started.value.process.parent(), null)
+    assert.equal(await started.value.process.option("mode"), "test")
+    const publication = await started.value.process.server.traffic.waitFor("trace")
+    assert.equal(publication.to, started.value.process.client)
+    assert.deepEqual(publication.payload, { value: 1 })
+    const asks = started.value.process.server.traffic.asks({ signal: AbortSignal.timeout(1_000) })
+    const question = (await asks.next()).value
+    await asks.return()
+    assert.equal(question.event, "trace")
+    assert.equal(question.questionId, "question-identity")
+    assert.equal(question.message.to, started.value.process.server)
+    assert.deepEqual(question.message.payload, { value: 2 })
+    const answers = started.value.process.server.traffic.answers({ signal: AbortSignal.timeout(1_000) })
+    const answer = (await answers.next()).value
+    await answers.return()
+    assert.equal(answer.event, "trace")
+    assert.equal(answer.questionId, "question-identity")
+    assert.equal(answer.message.to, started.value.process.client)
+    assert.deepEqual(answer.message.outcome, { success: true, value: 3 })
     assert.equal(await system.program.find(program.identity), created)
     assert.equal((await system.program.list())[0], created)
     assert.equal(await system.program.waitFor("create"), created)

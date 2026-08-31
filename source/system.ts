@@ -19,6 +19,11 @@ import {
   type ProgramDefinition,
   type ProgramEvents,
   type ProgramCommandChunk,
+  type ProgramIconSize,
+  type ProgramProcessEvents,
+  type ProgramSql,
+  type ProgramStore,
+  type ProcessEvents,
   type Service,
   type ServiceKey,
   type Size,
@@ -26,15 +31,14 @@ import {
   type SystemClientEntity,
   type SystemEndpointEntity,
   type SystemProcessEntity,
-  type SystemProcessEntityEvents,
   type SystemProcessEvents,
   type SystemProcess,
   type SystemProgram,
   type SystemProgramEntity,
   type SystemProgramEvents,
-  type SystemProgramProcessEvents,
   type SystemServerEntity,
   type SystemUploads,
+  type Storage,
   type WritableAppearance,
   type Window,
   type WindowEvents,
@@ -47,6 +51,8 @@ import Events from "./events.js"
 import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
 import { filesystemStorage } from "./storage.js"
+import { programSql, programStore } from "./program-resources.js"
+import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
@@ -252,6 +258,11 @@ interface ProgramHandle extends SystemProgramEntity {}
 class ProgramHandle extends ProgramBase {
   private readonly reference: string
   public readonly identity: string
+  public readonly data: Storage
+  public readonly cache: Storage
+  public readonly store: ProgramStore
+  public readonly logs: ProgramSql
+  public readonly database: ProgramSql
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
   private snapshot: ProgramSnapshot
@@ -264,6 +275,12 @@ class ProgramHandle extends ProgramBase {
     }, signal).then(value => programEntityEvent(event, value))))
     this.reference = snapshot.reference
     this.identity = snapshot.identity
+    const request = (value: object) => transport(system).api(value)
+    this.data = filesystemStorage(() => programStoragePath(system, this.identity, "data"), `Program "${this.identity}" data`)
+    this.cache = filesystemStorage(() => programStoragePath(system, this.identity, "cache"), `Program "${this.identity}" cache`)
+    this.store = programStore(request, this.identity)
+    this.logs = programSql(request, this.identity, "logs")
+    this.database = programSql(request, this.identity, "database")
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
   }
@@ -293,6 +310,12 @@ class ProgramHandle extends ProgramBase {
   public update(snapshot: ProgramSnapshot) {
     if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
     this.snapshot = snapshot
+  }
+
+  public async icon(size: ProgramIconSize = "medium") {
+    const value = await transport(this.system).api({ capability: "program", operation: "icon", program: this.identity, size })
+    if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid Program icon")
+    return new Blob([Uint8Array.from(value)], { type: "image/png" })
   }
 
   public async agent() {
@@ -348,7 +371,7 @@ class ProgramStartup {
   }
 }
 
-class ProgramProcesses extends Events<SystemProgramProcessEvents> {
+class ProgramProcesses extends Events<ProgramProcessEvents> {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {
     super(["create", "exit"], (event, signal, timeout) => transport(system).control({
       capability: "process", operation: "wait", input: { program: program.identity, event, timeout }
@@ -451,7 +474,7 @@ class ProcessHandle extends ProcessBase {
 
   public constructor(private readonly system: System, private readonly snapshot: ProcessSnapshot) {
     super()
-    bindEvents(this, new Events<SystemProcessEntityEvents>(["exit"], (event, signal, timeout) => transport(system).control({
+    bindEvents(this, new Events<ProcessEvents>(["exit"], (event, signal, timeout) => transport(system).control({
       capability: "process", operation: "wait", input: { process: snapshot.identity, event, timeout }
     }, signal).then(exactProcessEvent)))
     this.identity = snapshot.identity
@@ -463,11 +486,23 @@ class ProcessHandle extends ProcessBase {
 
   public program() { return programHandle(this.system, required(this.snapshot.programSnapshot, this.snapshot.program)) }
 
+  public async parent() {
+    if (!await this.exists()) throw new Error(`Process "${this.identity}" no longer exists`)
+    if (this.snapshot.parent === null) return null
+    const parent = await this.system.process.find(this.snapshot.parent)
+    if (!parent) throw new Error("The parent Process no longer exists")
+    return parent
+  }
+
+  public async option(name: string) { return this.snapshot.options[name] }
+
   public async exit() {
     await transport(this.system).control({ capability: "process", operation: "exit", input: { process: this.identity } })
   }
 
   public async exited() { return await this.system.process.find(this.identity) === null }
+
+  private async exists() { return !await this.exited() }
 }
 
 class EndpointOperations extends Events<{}, unknown> {
@@ -527,12 +562,19 @@ interface ServerEndpoint extends SystemServerEntity {}
 
 class ServerEndpoint extends ServerBase {
   public readonly endpoint = "server" as const
+  public readonly traffic: ServerTrafficHandle
   public readonly lifecycle: EndpointLifecycle
   private readonly base: EndpointOperations
 
   public constructor(private readonly system: System, private readonly owner: ProcessHandle) {
     super()
     this.base = new EndpointOperations(system, owner, "server")
+    this.traffic = new ServerTrafficHandle(
+      (value, signal) => transport(system).api(value, signal),
+      owner.identity,
+      "server",
+      value => endpointFromReference(system, value)
+    )
     this.lifecycle = this.base.lifecycle
     bindEvents(this, this.base)
   }
@@ -566,6 +608,7 @@ interface ClientEndpoint extends SystemClientEntity {}
 
 class ClientEndpoint extends ClientBase {
   public readonly endpoint = "client" as const
+  public readonly traffic: EndpointTrafficHandle
   public readonly lifecycle: EndpointLifecycle
   public readonly window: SystemWindow
   private readonly base: EndpointOperations
@@ -573,6 +616,12 @@ class ClientEndpoint extends ClientBase {
   public constructor(system: System, owner: ProcessHandle) {
     super()
     this.base = new EndpointOperations(system, owner, "client")
+    this.traffic = new EndpointTrafficHandle(
+      (value, signal) => transport(system).api(value, signal),
+      owner.identity,
+      "client",
+      value => endpointFromReference(system, value)
+    )
     this.lifecycle = this.base.lifecycle
     bindEvents(this, this.base)
     this.window = new SystemWindow(system, owner)
@@ -765,6 +814,35 @@ function eventsOf<Definitions extends object, Fallback>(events: Events<Definitio
 }
 
 function chronological(left: SystemProcessEntity, right: SystemProcessEntity) { return left.startedAt.getTime() - right.startedAt.getTime() }
+async function programStoragePath(system: System, program: string, area: "data" | "cache") {
+  const value = await transport(system).api({ capability: "program", operation: "storagePath", program, area })
+  if (typeof value !== "string") throw new Error("The System returned an invalid Program storage path")
+  return value
+}
+
+function endpointFromReference(system: System, value: unknown) {
+  const reference = value as EndpointReference | null
+  if (!reference || (reference.kind !== "server" && reference.kind !== "client")) throw new Error("The System returned an invalid Endpoint reference")
+  const owner = processHandle(system, snapshotFromReference(reference.process))
+  return reference.kind === "server" ? owner.server : owner.client
+}
+
+function snapshotFromReference(reference: ProcessReference): ProcessSnapshot {
+  const owner = reference.program
+  if (!owner || typeof owner.reference !== "string" || typeof owner.identity !== "string") throw new Error("The System returned an invalid Process reference")
+  return {
+    reference: reference.reference,
+    identity: reference.identity,
+    name: reference.name,
+    program: owner.identity,
+    programSnapshot: owner,
+    parent: null,
+    options: reference.options,
+    startedAt: reference.startedAt,
+    server: { declared: owner.server !== null, running: reference.server !== null, service: reference.server?.service === true },
+    client: { declared: owner.client !== null, running: reference.client !== null, service: reference.client?.service === true }
+  }
+}
 function unknown(error: unknown, entity: string) { return error instanceof Error && error.message.startsWith(`Unknown ${entity}`) }
 function required<Value>(value: Value | undefined, identity = ""): Value {
   if (value !== undefined) return value
@@ -789,10 +867,23 @@ interface ProcessSnapshot {
   name: string | null
   program: string
   programSnapshot?: ProgramSnapshot
+  parent: string | null
+  options: Record<string, string>
   startedAt: string
   server: { declared: boolean, running: boolean, service: boolean }
   client: { declared: boolean, running: boolean, service: boolean }
 }
+interface ProcessReference {
+  reference: string
+  identity: string
+  name: string | null
+  program: ProgramSnapshot
+  options: Record<string, string>
+  startedAt: string
+  server: { service: boolean } | null
+  client: { service: boolean } | null
+}
+interface EndpointReference { kind: "server" | "client", process: ProcessReference }
 interface EndpointSnapshot { running: boolean, service: boolean }
 interface WindowSnapshot {
   title: string

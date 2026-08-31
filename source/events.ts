@@ -65,7 +65,7 @@ export default class Events<Definitions extends object, Fallback = never> {
   }
 }
 
-function stream<Message>(register: Register<Message>, options: EventOptions = {}): AsyncIterableIterator<Message> {
+export function stream<Message>(register: Register<Message>, options: EventOptions = {}): AsyncIterableIterator<Message> {
   const capacity = options.capacity ?? 64
   if (capacity !== Infinity && (!Number.isInteger(capacity) || capacity < 0)) {
     throw new Error("An event queue capacity must be a non-negative integer or Infinity")
