@@ -236,8 +236,8 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   private async event(value: unknown) {
     const waited = value as { event?: string, payload?: unknown }
     if (waited.event === "uninstall") {
-      const payload = waited.payload as { program?: ProgramSnapshot, everythingRemoved?: boolean }
-      return { program: programHandle(this.system, required(payload.program)), everythingRemoved: payload.everythingRemoved === true }
+      const payload = waited.payload as { program?: ProgramSnapshot, everything?: boolean }
+      return { program: programHandle(this.system, required(payload.program)), everything: payload.everything === true }
     }
     return programHandle(this.system, required(waited.payload as ProgramSnapshot | undefined))
   }
@@ -257,7 +257,7 @@ class ProgramHandle extends ProgramBase {
     this.snapshot = snapshot
     bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, signal, timeout) => transport(system).control({
       capability: "program", operation: "wait", input: { program: snapshot.identity, event, timeout }
-    }, signal).then(value => (value as { payload?: unknown }).payload)))
+    }, signal).then(value => programEntityEvent(event, value))))
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     this.process = new ProgramProcesses(system, this)
@@ -342,7 +342,7 @@ class ProgramStartup {
 
 class ProgramProcesses extends Events<SystemProgramProcessEvents> {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {
-    super(["endpointStart", "endpointStop", "create", "exit"], (event, signal, timeout) => transport(system).control({
+    super(["create", "exit"], (event, signal, timeout) => transport(system).control({
       capability: "process", operation: "wait", input: { program: program.identity, event, timeout }
     }, signal).then(value => processEvent(system, value)))
   }
@@ -414,7 +414,7 @@ class ProgramProcesses extends Events<SystemProgramProcessEvents> {
 
 class ProcessRegistry extends Events<SystemProcessEvents> {
   public constructor(private readonly system: System) {
-    super(["endpointStart", "endpointStop", "create", "exit"], (event, signal, timeout) => transport(system).control({
+    super(["create", "exit"], (event, signal, timeout) => transport(system).control({
       capability: "process", operation: "wait", input: { event, timeout }
     }, signal).then(value => processEvent(system, value)))
   }
@@ -443,9 +443,9 @@ class ProcessHandle extends ProcessBase {
 
   public constructor(private readonly system: System, private readonly snapshot: ProcessSnapshot) {
     super()
-    bindEvents(this, new Events<SystemProcessEntityEvents>(["endpointStart", "endpointStop", "exit"], (event, signal, timeout) => transport(system).control({
+    bindEvents(this, new Events<SystemProcessEntityEvents>(["exit"], (event, signal, timeout) => transport(system).control({
       capability: "process", operation: "wait", input: { process: snapshot.identity, event, timeout }
-    }, signal).then(value => processEvent(system, value))))
+    }, signal).then(exactProcessEvent)))
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
@@ -715,18 +715,16 @@ async function waitEndpointLifecycle(
   timeout = 10_000
 ) {
   if (event !== "start" && event !== "stop") throw new Error(`An Endpoint lifecycle has no "${event}" event`)
-  const processEventName = event === "start" ? "endpointStart" : "endpointStop"
-  const deadline = Date.now() + timeout
+  await transport(system).control({
+    capability: "endpoint",
+    operation: "waitLifecycle",
+    input: { process: owner.identity, endpoint, event, timeout }
+  }, signal)
+}
 
-  while (true) {
-    const value = await transport(system).control({
-      capability: "process",
-      operation: "wait",
-      input: { process: owner.identity, event: processEventName, timeout: Math.max(0, deadline - Date.now()) }
-    }, signal)
-    const changed = processEvent(system, value)
-    if (changed === owner[endpoint]) return undefined
-  }
+function programEntityEvent(event: string | null, value: unknown) {
+  const payload = (value as { payload?: unknown }).payload as { everything?: unknown } | undefined
+  return event === "uninstall" ? payload?.everything === true : undefined
 }
 
 function processEvent(system: System, value: unknown): unknown {
@@ -738,12 +736,18 @@ function processEvent(system: System, value: unknown): unknown {
     code: payload.code,
     signal: payload.signal
   }
-  if ((waited.event === "endpointStart" || waited.event === "endpointStop") && payload?.processSnapshot) {
-    const process = processHandle(system, payload.processSnapshot as ProcessSnapshot)
-    return payload.endpoint === "client" ? process.client : process.server
-  }
   if (payload && typeof payload.identity === "string") return processHandle(system, payload as unknown as ProcessSnapshot)
   return payload
+}
+
+function exactProcessEvent(value: unknown) {
+  const payload = (value as { payload?: unknown }).payload as Record<string, unknown> | undefined
+  if (!payload) return payload
+  return {
+    status: payload.status,
+    code: payload.code,
+    signal: payload.signal
+  }
 }
 
 function bindEvents<Definitions extends object, Fallback>(target: object, events: Events<Definitions, Fallback>) {

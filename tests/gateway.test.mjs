@@ -239,10 +239,14 @@ test("a Process run is addressed to the exact Program and follows its signal", a
       } else if (envelope.request.capability === "process" && envelope.request.operation === "list") {
         socket.end(`${JSON.stringify({ success: true, result: { data: [process], total: 1, truncated: false } })}\n`)
       } else if (envelope.request.capability === "process" && envelope.request.operation === "wait") {
-        const payload = envelope.request.input.event === "endpointStart"
-          ? { processSnapshot: process, endpoint: "server" }
-          : process
+        const payload = process
         socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload } })}\n`)
+      } else if (envelope.request.capability === "endpoint" && envelope.request.operation === "waitLifecycle") {
+        socket.end(`${JSON.stringify({ success: true, result: {
+          scope: "endpoint.lifecycle",
+          event: envelope.request.input.event,
+          payload: null
+        } })}\n`)
       }
     })
     socket.on("close", () => { if (running) closeRun() })
@@ -283,7 +287,6 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(await system.process.find(process.identity), started.value.process)
     assert.equal((await system.process.list())[0], started.value.process)
     assert.equal(await system.process.waitFor("create"), started.value.process)
-    assert.equal(await system.process.waitFor("endpointStart"), started.value.process.server)
     assert.equal(await started.value.process.server.lifecycle.waitFor("start"), undefined)
 
     controller.abort(new Error("cancelled by test"))
