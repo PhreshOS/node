@@ -24,7 +24,6 @@ import {
   type ProgramSql,
   type ProgramStore,
   type ProcessEvents,
-  type Service,
   type ServiceKey,
   type Size,
   type System as CoreSystem,
@@ -137,9 +136,9 @@ export class System implements CoreSystem {
     state.handles.clear()
   }
 
-  public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap>
-  public service<EventsMap extends object = {}>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap>
-  public service(key: ServiceKey): Service {
+  public service<EventsMap extends object = {}, Fallback = never>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = never>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap, Fallback>
+  public service(key: ServiceKey): unknown {
     requireConnected(this)
     if (!isServiceKey(key)) throw new Error("A complete service key is required")
 
@@ -683,11 +682,11 @@ class ServiceBase {
 }
 
 /** Node-SDK handle for a Service provided by a Server Endpoint. */
-export class ServerService<EventsMap extends object = {}> extends CoreServerService<EventsMap> {
+export class ServerService<EventsMap extends object = {}, Fallback = never> extends CoreServerService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
 
-class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<EventsMap> {
+class ServerServiceHandle<EventsMap extends object = {}, Fallback = never> extends ServerService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
@@ -695,7 +694,7 @@ class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<E
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
+    bindEvents(this, new Events<EventsMap, Fallback>([], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "events", key, event, timeout
     }, signal)))
   }
@@ -716,11 +715,11 @@ class ServerServiceHandle<EventsMap extends object = {}> extends ServerService<E
 }
 
 /** Node-SDK handle for a Service provided by a Client Endpoint. */
-export class ClientService<EventsMap extends object = {}> extends CoreClientService<EventsMap> {
+export class ClientService<EventsMap extends object = {}, Fallback = never> extends CoreClientService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
 
-class ClientServiceHandle<EventsMap extends object = {}> extends ClientService<EventsMap> {
+class ClientServiceHandle<EventsMap extends object = {}, Fallback = never> extends ClientService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
@@ -728,7 +727,7 @@ class ClientServiceHandle<EventsMap extends object = {}> extends ClientService<E
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, keyof EventsMap extends never ? unknown : never>([], (event, signal, timeout) => transport(system).api({
+    bindEvents(this, new Events<EventsMap, Fallback>([], (event, signal, timeout) => transport(system).api({
       capability: "service", operation: "wait", scope: "events", key, event, timeout
     }, signal)))
   }

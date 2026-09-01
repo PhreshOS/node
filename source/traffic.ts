@@ -7,8 +7,7 @@ import type {
   Endpoint,
   EventOptions,
   ServerTraffic,
-  TrafficEvents,
-  TrafficMessage
+  TrafficEvents
 } from "@phreshos/core"
 import Events, { stream } from "./events.js"
 
@@ -19,7 +18,7 @@ type ResolveEndpoint = (value: unknown) => Endpoint
 /** Directed traffic originating from one canonical Endpoint. */
 export class EndpointTrafficHandle<Definitions extends object = {}> extends Events<
   TrafficEvents<Definitions>,
-  keyof Definitions extends never ? TrafficMessage : never
+  never
 > {
   public constructor(
     private readonly request: Request,
