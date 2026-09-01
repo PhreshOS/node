@@ -5,7 +5,7 @@
     "": {
       "name": "@phreshos/node",
       "dependencies": {
-        "@phreshos/core": "^0.1.31",
+        "@phreshos/core": "^0.1.32",
         "adm-zip": "^0.6.0",
         "jiti": "^2.7.0",
       },
@@ -17,7 +17,7 @@
     },
   },
   "packages": {
-    "@phreshos/core": ["@phreshos/core@0.1.31", "", {}, "sha512-ilIAUYEeldEgfgdNrANu36eLcKCgh5Usc72PnFSIfBV3jsRxKRKrIEBEcnOHoiwvKMjo5cgBi3mPo8CvYy5LMg=="],
+    "@phreshos/core": ["@phreshos/core@0.1.32", "", {}, "sha512-RuzF+lR7gadRVvZPO4g1h1s2cWkpP0I4pVoMBtvrn8Kxk3PWrdezvijzi20XnEi5Kw2XVnUb8LRNeP2IehXzbg=="],
 
     "@types/adm-zip": ["@types/adm-zip@0.5.8", "", { "dependencies": { "@types/node": "*" } }, "sha512-RVVH7QvZYbN+ihqZ4kX/dMiowf6o+Jk1fNwiSdx0NahBJLU787zkULhGhJM8mf/obmLGmgdMM0bXsQTmyfbR7Q=="],
 
