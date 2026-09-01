@@ -136,8 +136,8 @@ export class System implements CoreSystem {
     state.handles.clear()
   }
 
-  public service<EventsMap extends object = {}, Fallback = never>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap, Fallback>
-  public service<EventsMap extends object = {}, Fallback = never>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap, Fallback>
   public service(key: ServiceKey): unknown {
     requireConnected(this)
     if (!isServiceKey(key)) throw new Error("A complete service key is required")
@@ -682,11 +682,11 @@ class ServiceBase {
 }
 
 /** Node-SDK handle for a Service provided by a Server Endpoint. */
-export class ServerService<EventsMap extends object = {}, Fallback = never> extends CoreServerService<EventsMap, Fallback> {
+export class ServerService<EventsMap extends object = {}, Fallback = unknown> extends CoreServerService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
 
-class ServerServiceHandle<EventsMap extends object = {}, Fallback = never> extends ServerService<EventsMap, Fallback> {
+class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends ServerService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
@@ -715,11 +715,11 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = never> exten
 }
 
 /** Node-SDK handle for a Service provided by a Client Endpoint. */
-export class ClientService<EventsMap extends object = {}, Fallback = never> extends CoreClientService<EventsMap, Fallback> {
+export class ClientService<EventsMap extends object = {}, Fallback = unknown> extends CoreClientService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
 
-class ClientServiceHandle<EventsMap extends object = {}, Fallback = never> extends ClientService<EventsMap, Fallback> {
+class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends ClientService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
