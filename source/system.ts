@@ -32,12 +32,14 @@ import {
   type SystemProcessEntity,
   type SystemProcessEvents,
   type SystemProcess,
+  type SystemProcessRunEvent,
+  type SystemProcessRunOptions,
   type SystemProgram,
   type SystemProgramEntity,
   type SystemProgramEvents,
   type SystemServerEntity,
   type SystemUploads,
-  type Storage,
+  type SystemStorage,
   type WritableAppearance,
   type Window,
   type WindowEvents,
@@ -50,19 +52,13 @@ import Events from "./events.js"
 import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
 import { filesystemStorage } from "./storage.js"
-import { programSql, programStore } from "./program-resources.js"
+import { programPermission, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
-export type ProgramProcessRunOptions = Readonly<{
-  signal?: AbortSignal
-}>
-
-export type ProgramProcessRunEvent =
-  | Readonly<{ event: "started", process: SystemProcessEntity }>
-  | (Readonly<{ event: "output" }> & ProgramCommandChunk)
-  | Readonly<{ event: "exited", process: SystemProcessEntity, exit: import("@phreshos/core").Exit }>
+export type ProgramProcessRunOptions = SystemProcessRunOptions
+export type ProgramProcessRunEvent = SystemProcessRunEvent
 
 interface SystemTransport {
   control(request: object, signal?: AbortSignal): Promise<unknown>
@@ -257,11 +253,12 @@ interface ProgramHandle extends SystemProgramEntity {}
 class ProgramHandle extends ProgramBase {
   private readonly reference: string
   public readonly identity: string
-  public readonly data: Storage
-  public readonly cache: Storage
+  public readonly data: SystemStorage
+  public readonly cache: SystemStorage
   public readonly store: ProgramStore
   public readonly logs: ProgramSql
   public readonly database: ProgramSql
+  public readonly permission
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
   private snapshot: ProgramSnapshot
@@ -269,17 +266,19 @@ class ProgramHandle extends ProgramBase {
   public constructor(private readonly system: System, snapshot: ProgramSnapshot) {
     super()
     this.snapshot = snapshot
-    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, signal, timeout) => transport(system).control({
-      capability: "program", operation: "wait", input: { program: snapshot.identity, event, timeout }
-    }, signal).then(value => programEntityEvent(event, value))))
     this.reference = snapshot.reference
     this.identity = snapshot.identity
+    const address = this.address()
+    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, signal, timeout) => transport(system).api({
+      capability: "program", operation: "wait", handle: address, event, timeout
+    }, signal)))
     const request = (value: object) => transport(system).api(value)
-    this.data = filesystemStorage(() => programStoragePath(system, this.identity, "data"), `Program "${this.identity}" data`)
-    this.cache = filesystemStorage(() => programStoragePath(system, this.identity, "cache"), `Program "${this.identity}" cache`)
-    this.store = programStore(request, this.identity)
-    this.logs = programSql(request, this.identity, "logs")
-    this.database = programSql(request, this.identity, "database")
+    this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`)
+    this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`)
+    this.store = programStore(request, address)
+    this.logs = programSql(request, address, "logs")
+    this.database = programSql(request, address, "database")
+    this.permission = programPermission(request, address)
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
   }
@@ -312,15 +311,15 @@ class ProgramHandle extends ProgramBase {
   }
 
   public async icon(size: ProgramIconSize = "medium") {
-    const value = await transport(this.system).api({ capability: "program", operation: "icon", program: this.identity, size })
+    const value = await transport(this.system).api({ capability: "program", operation: "icon", handle: this.address(), size })
     if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid Program icon")
     return new Blob([Uint8Array.from(value)], { type: "image/png" })
   }
 
   public async agent() {
     if (!this.hasAgent) return null
-    const value = await transport(this.system).control({ capability: "program", operation: "agent", input: { program: this.identity } }) as { content?: unknown }
-    return typeof value.content === "string" ? value.content : null
+    const value = await transport(this.system).api({ capability: "program", operation: "agent", handle: this.address() })
+    return typeof value === "string" ? value : null
   }
 
   public async installed() {
@@ -332,6 +331,13 @@ class ProgramHandle extends ProgramBase {
 
   public install() { return command(this.system, { word: "install-existing", handle: this.address() }) }
   public uninstall(everything = false) { return command(this.system, { word: "uninstall-existing", handle: this.address(), everything }) }
+
+  public async fork(identity: string) {
+    for await (const event of transport(this.system).lifecycle({ word: "fork", handle: this.address(), identity })) {
+      if (event.event === "created") return programHandle(this.system, required(event.program as ProgramSnapshot | undefined))
+    }
+    throw new Error("The System did not confirm the forked Program")
+  }
 
   public async forget() {
     for await (const _event of transport(this.system).lifecycle({ word: "forget", handle: this.address() })) { /* consume completion */ }
@@ -372,12 +378,16 @@ class ProgramStartup {
 
 class ProgramProcesses extends Events<ProgramProcessEvents> {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {
-    super(["create", "exit"], (event, signal, timeout) => transport(system).control({
-      capability: "process", operation: "wait", input: { program: program.identity, event, timeout }
-    }, signal).then(value => processEvent(system, value)))
+    super(["create", "exit"], (event, signal, timeout) => transport(system).api({
+      capability: "programProcess", operation: "wait", handle: program.address(), event, timeout
+    }, signal).then(value => programProcessEvent(system, event, value)))
   }
 
-  public async list() { return await listProcesses(this.system, this.program.identity) }
+  public async list() {
+    const value = await transport(this.system).api({ capability: "programProcess", operation: "list", handle: this.program.address() })
+    if (!Array.isArray(value)) throw new Error("The System returned an invalid Program Process list")
+    return value.map(snapshot => processHandle(this.system, snapshot as ProcessSnapshot))
+  }
   public async first() { return (await this.list()).sort(chronological)[0] ?? null }
   public async last() { return (await this.list()).sort(chronological).at(-1) ?? null }
 
@@ -743,11 +753,11 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
 
-async function listProcesses(system: System, program?: string) {
+async function listProcesses(system: System) {
   const processes: ProcessHandle[] = []
   let offset = 0
   while (true) {
-    const page = await transport(system).control({ capability: "process", operation: "list", input: { program, limit: 100, offset } }) as Page<ProcessSnapshot>
+    const page = await transport(system).control({ capability: "process", operation: "list", input: { limit: 100, offset } }) as Page<ProcessSnapshot>
     processes.push(...page.data.map(snapshot => processHandle(system, snapshot)))
     offset += page.data.length
     if (!page.truncated || !page.data.length) return processes
@@ -779,11 +789,6 @@ async function waitEndpointLifecycle(
   }, signal)
 }
 
-function programEntityEvent(event: string | null, value: unknown) {
-  const payload = (value as { payload?: unknown }).payload as { everything?: unknown } | undefined
-  return event === "uninstall" ? payload?.everything === true : undefined
-}
-
 function processEvent(system: System, value: unknown): unknown {
   const waited = value as { event?: string, payload?: unknown }
   const payload = waited.payload as Record<string, unknown> | undefined
@@ -795,6 +800,18 @@ function processEvent(system: System, value: unknown): unknown {
   }
   if (payload && typeof payload.identity === "string") return processHandle(system, payload as unknown as ProcessSnapshot)
   return payload
+}
+
+function programProcessEvent(system: System, event: string | null, value: unknown) {
+  if (event === "create") return processHandle(system, value as ProcessSnapshot)
+
+  const exit = value as Record<string, unknown>
+  return {
+    process: processHandle(system, required(exit.process as ProcessSnapshot | undefined)),
+    status: exit.status,
+    code: exit.code,
+    signal: exit.signal
+  }
 }
 
 function exactProcessEvent(value: unknown) {
@@ -820,8 +837,8 @@ function eventsOf<Definitions extends object, Fallback>(events: Events<Definitio
 }
 
 function chronological(left: SystemProcessEntity, right: SystemProcessEntity) { return left.startedAt.getTime() - right.startedAt.getTime() }
-async function programStoragePath(system: System, program: string, area: "data" | "cache") {
-  const value = await transport(system).api({ capability: "program", operation: "storagePath", program, area })
+async function programStoragePath(system: System, handle: ReturnType<ProgramHandle["address"]>, area: "data" | "cache") {
+  const value = await transport(system).api({ capability: "program", operation: "storagePath", handle, area })
   if (typeof value !== "string") throw new Error("The System returned an invalid Program storage path")
   return value
 }
@@ -907,11 +924,11 @@ export const Program = CoreProgram
 export type Process = SystemProcessEntity
 export const Process = CoreProcess
 
-export type Endpoint<EventsMap extends object = {}> = SystemEndpointEntity<EventsMap>
+export type Endpoint<EventsMap extends object = {}, Fallback = unknown> = SystemEndpointEntity<EventsMap, Fallback>
 export const Endpoint = CoreEndpoint
 
-export type Server<EventsMap extends object = {}> = SystemServerEntity<EventsMap>
+export type Server<EventsMap extends object = {}, Fallback = unknown> = SystemServerEntity<EventsMap, Fallback>
 export const Server = CoreServer
 
-export type Client<EventsMap extends object = {}> = SystemClientEntity<EventsMap>
+export type Client<EventsMap extends object = {}, Fallback = unknown> = SystemClientEntity<EventsMap, Fallback>
 export const Client = CoreClient

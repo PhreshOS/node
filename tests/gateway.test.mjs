@@ -208,11 +208,12 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     name: "Example",
     version: null,
     description: null,
-    hasAgent: false,
+    hasAgent: true,
     server: { start: true, service: false },
     client: null
   }
   const replacement = { ...program, reference: "replacement-reference" }
+  const forkedProgram = { ...program, reference: "forked-reference", identity: "forked" }
   const process = {
     reference: "process-reference",
     identity: "process-identity",
@@ -239,23 +240,25 @@ test("a Process run is addressed to the exact Program and follows its signal", a
 
       if (envelope.request.word === "force-create") {
         socket.end(`${JSON.stringify({ event: "created", program: creations++ === 0 ? program : replacement })}\n`)
+      } else if (envelope.request.word === "fork") {
+        socket.end(`${JSON.stringify({ event: "created", program: forkedProgram })}\n`)
       } else if (envelope.request.word === "run-process") {
         running = true
         socket.write(`${JSON.stringify({ event: "started", process })}\n`)
-      } else if (envelope.request.capability === "program" && envelope.request.operation === "inspect") {
+      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "inspect") {
         socket.end(`${JSON.stringify({ success: true, result: program })}\n`)
-      } else if (envelope.request.capability === "program" && envelope.request.operation === "list") {
+      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "list") {
         socket.end(`${JSON.stringify({ success: true, result: { data: [program], total: 1, truncated: false } })}\n`)
-      } else if (envelope.request.capability === "program" && envelope.request.operation === "wait") {
+      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "wait") {
         socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload: program } })}\n`)
-      } else if (envelope.request.capability === "process" && envelope.request.operation === "inspect") {
+      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "inspect") {
         socket.end(`${JSON.stringify({ success: true, result: process })}\n`)
-      } else if (envelope.request.capability === "process" && envelope.request.operation === "list") {
+      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "list") {
         socket.end(`${JSON.stringify({ success: true, result: { data: [process], total: 1, truncated: false } })}\n`)
-      } else if (envelope.request.capability === "process" && envelope.request.operation === "wait") {
+      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "wait") {
         const payload = process
         socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload } })}\n`)
-      } else if (envelope.request.capability === "endpoint" && envelope.request.operation === "waitLifecycle") {
+      } else if (envelope.target === "system" && envelope.request.capability === "endpoint" && envelope.request.operation === "waitLifecycle") {
         socket.end(`${JSON.stringify({ success: true, result: {
           scope: "endpoint.lifecycle",
           event: envelope.request.input.event,
@@ -263,15 +266,14 @@ test("a Process run is addressed to the exact Program and follows its signal", a
         } })}\n`)
       } else if (envelope.target === "api" && envelope.request.capability === "program") {
         const request = envelope.request
-        const result = request.operation === "storagePath"
-          ? join(home, request.area)
-          : request.operation === "icon"
-            ? [137, 80, 78, 71]
-            : request.operation === "store" && request.storeOperation === "get"
-              ? "stored"
-              : request.operation === "query"
-                ? [{ value: 1 }]
-                : true
+        socket.end(`${JSON.stringify({ success: true, result: programApiResult(request, home) })}\n`)
+      } else if (envelope.target === "api" && envelope.request.capability === "programProcess") {
+        const request = envelope.request
+        const result = request.operation === "list"
+          ? [process]
+          : request.event === "create"
+            ? process
+            : { process, status: "exited", code: 0, signal: null }
         socket.end(`${JSON.stringify({ success: true, result })}\n`)
       } else if (envelope.target === "api" && envelope.request.capability === "traffic") {
         const request = envelope.request
@@ -330,15 +332,30 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(started.value.process.client instanceof Endpoint, true)
     assert.equal(await started.value.process.server.process(), started.value.process)
     assert.equal(typeof created.data.text, "function")
+    assert.equal(await created.data.path(), join(home, "data"))
+    assert.equal(await created.data.resolve("state.txt"), join(home, "data", "state.txt"))
     assert.equal(typeof created.cache.clear, "function")
     assert.equal(typeof created.store.get, "function")
     assert.equal(typeof created.logs.query, "function")
     assert.equal(typeof created.database.query, "function")
     assert.equal((await created.icon()).type, "image/png")
+    assert.equal(await created.agent(), "Program agent")
     await created.data.write("state.txt", "canonical")
     assert.equal(await created.data.text("state.txt"), "canonical")
     assert.equal(await created.store.get("state"), "stored")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
+    assert.deepEqual(await created.permission.getAll(), { pointer: true })
+    assert.equal(await created.permission.get("pointer"), true)
+    await created.permission.set("pointer", false)
+    await created.permission.delete("pointer")
+    assert.equal(await created.waitFor("uninstall"), true)
+    assert.equal(await created.waitFor("forget"), undefined)
+    assert.equal((await created.process.list())[0], started.value.process)
+    assert.equal(await created.process.waitFor("create"), started.value.process)
+    assert.equal((await created.process.waitFor("exit")).process, started.value.process)
+    const forked = await created.fork("forked")
+    assert.equal(forked.identity, "forked")
+    assert.equal(forked instanceof Program, true)
     assert.equal(await started.value.process.parent(), null)
     assert.equal(await started.value.process.option("mode"), "test")
     const publication = await started.value.process.server.traffic.waitFor("trace")
@@ -374,6 +391,15 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.deepEqual(run.handle, { identity: "example", reference: "program-reference" })
     assert.deepEqual(run.launch, { options: { mode: "test" } })
 
+    const exactProgramRequests = requests.filter(value =>
+      value.target === "api" && value.request.capability === "program"
+    )
+    const exactProcessRequests = requests.filter(value =>
+      value.target === "api" && value.request.capability === "programProcess"
+    )
+    assert(exactProgramRequests.every(value => value.request.handle?.reference === program.reference))
+    assert(exactProcessRequests.every(value => value.request.handle?.reference === program.reference))
+
     const replaced = await system.forceCreateProgram({
       identity: "example",
       storage: join(home, "storage"),
@@ -388,3 +414,15 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     await rm(home, { recursive: true, force: true })
   }
 })
+
+function programApiResult(request, home) {
+  if (request.operation === "storagePath") return join(home, request.area)
+  if (request.operation === "agent") return "Program agent"
+  if (request.operation === "wait") return request.event === "uninstall" ? true : undefined
+  if (request.operation === "permission" && request.permissionOperation === "getAll") return { pointer: true }
+  if (request.operation === "permission" && request.permissionOperation === "get") return true
+  if (request.operation === "icon") return [137, 80, 78, 71]
+  if (request.operation === "store" && request.storeOperation === "get") return "stored"
+  if (request.operation === "query") return [{ value: 1 }]
+  return true
+}

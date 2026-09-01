@@ -1,4 +1,4 @@
-import type { EntryStat, Storage } from "@phreshos/core"
+import type { EntryStat, SystemStorage } from "@phreshos/core"
 import { randomUUID } from "node:crypto"
 import { createReadStream, createWriteStream, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs"
 import { rm } from "node:fs/promises"
@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 
 /** Create one filesystem implementation bounded beneath a resolved absolute root. */
-export function filesystemStorage(source: string | (() => Promise<string>), label: string): Storage {
+export function filesystemStorage(source: string | (() => Promise<string>), label: string): SystemStorage {
   let root: Promise<string> | null = null
 
   const resolveRoot = () => {
@@ -19,7 +19,8 @@ export function filesystemStorage(source: string | (() => Promise<string>), labe
     return root
   }
 
-  const resolve = async (...parts: string[]) => contained(await resolveRoot(), parts)
+  const path = () => resolveRoot()
+  const resolve = async (...parts: string[]) => contained(await path(), parts)
 
   async function stream(...parts: [string, ...string[]]) {
     const destination = await resolve(...parts)
@@ -48,6 +49,8 @@ export function filesystemStorage(source: string | (() => Promise<string>), labe
   }
 
   return {
+    path,
+    resolve,
     stream,
     async bytes(...parts) { return new Uint8Array(await new Response(await stream(...parts)).arrayBuffer()) },
     async text(...parts) { return new Response(await stream(...parts)).text() },

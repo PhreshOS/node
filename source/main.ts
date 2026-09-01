@@ -15,9 +15,12 @@ export {
   Service,
   type ClientLaunch,
   type Launch,
+  type ProgramPermission,
   type ProgramDefinition,
   type ServerLaunch,
   type ServiceKey,
+  type SystemProgramStartup,
+  type SystemStorage,
 } from "@phreshos/core"
 export { resolveHome } from "./home.js"
 export {
