@@ -532,6 +532,12 @@ class EndpointOperations extends Events<{}, unknown> {
   public async start(launch: ServerLaunch | ClientLaunch = {}) { await this.operation("start", launch) }
   public async stop() { await this.operation("stop") }
 
+  public async waitReady(timeout?: number) {
+    await transport(this.system).control({ capability: "endpoint", operation: "waitReady", input: {
+      process: this.owner.identity, endpoint: this.endpoint, timeout
+    } })
+  }
+
   public async isService() {
     return await transport(this.system).api({
       capability: "endpoint", operation: "isService", process: this.owner.identity, endpoint: this.endpoint
@@ -580,6 +586,7 @@ class ServerEndpoint extends ServerBase {
 
   public process() { return this.base.process() }
   public exists() { return this.base.exists() }
+  public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public isService() { return this.base.isService() }
   public start(launch?: ServerLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
@@ -595,10 +602,6 @@ class ServerEndpoint extends ServerBase {
     return { ask: <Answer = unknown>(event: string, payload?: unknown) => transport(this.system).control({
       capability: "endpoint", operation: "ask", input: { process: this.owner.identity, endpoint: "server", event, payload, timeout: milliseconds }
     }) as Promise<Answer> }
-  }
-
-  public async waitReady(timeout?: number) {
-    await transport(this.system).control({ capability: "endpoint", operation: "waitReady", input: { process: this.owner.identity, endpoint: "server", timeout } })
   }
 
 }
@@ -628,6 +631,7 @@ class ClientEndpoint extends ClientBase {
 
   public process() { return this.base.process() }
   public exists() { return this.base.exists() }
+  public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public isService() { return this.base.isService() }
   public start(launch?: ClientLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
@@ -676,6 +680,10 @@ class ServiceBase {
 
   public async exists() { return await transport(this.system).api({ capability: "service", operation: "exists", key: this.key }) as boolean }
 
+  public async waitReady(timeout?: number) {
+    await transport(this.system).api({ capability: "service", operation: "waitReady", key: this.key, timeout })
+  }
+
   public publish(event: string, payload?: unknown) {
     void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
   }
@@ -700,9 +708,7 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   }
 
   public override exists() { return this.base.exists() }
-  public override async waitReady(timeout?: number) {
-    await transport(this.system).api({ capability: "service", operation: "waitReady", key: this.key, timeout })
-  }
+  public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
     return await transport(this.system).api({ capability: "service", operation: "ask", key: this.key, event, payload }) as Answer
@@ -733,6 +739,7 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   }
 
   public override exists() { return this.base.exists() }
+  public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
 

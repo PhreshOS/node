@@ -188,7 +188,7 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert(clientService instanceof ClientService)
     assert.equal(typeof clientService.exists, "function")
     assert.equal(typeof clientService.publish, "function")
-    assert.equal("waitReady" in clientService, false)
+    assert.equal(typeof clientService.waitReady, "function")
   } finally {
     await system.disconnect()
     await new Promise(resolve => server.close(resolve))
