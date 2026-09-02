@@ -108,7 +108,8 @@ export class Project {
         size: config.client?.size,
         position: config.client?.position,
         layer: config.client?.layer,
-        minimize: config.client?.minimize
+        minimize: config.client?.minimize,
+        permissions: config.client?.permissions
       } }
     } as ProgramDefinition
   }
@@ -338,7 +339,8 @@ function packageDefinition(config: Config, version: string) {
       size: config.client.size,
       position: config.client.position,
       layer: config.client.layer,
-      minimize: config.client.minimize
+      minimize: config.client.minimize,
+      permissions: config.client.permissions
     } }
   }
 }

@@ -103,6 +103,7 @@ test("Project returns the original development and installation generators", asy
     identity: "example",
     client: {
       location: "dist/client",
+      permissions: { files: true },
       development: { url: "https://localhost.example/client/" }
     }
   })
@@ -122,6 +123,8 @@ test("Project returns the original development and installation generators", asy
   assert.equal(await project.dev(system), development)
   assert.equal(await project.install(system), installation)
   assert.equal(definitions[0].client.location, "https://localhost.example/client/")
+  assert.deepEqual(definitions[0].client.permissions, { files: true })
+  assert.deepEqual(definitions[1].client.permissions, { files: true })
   assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
 })
 
@@ -338,16 +341,16 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(typeof created.store.get, "function")
     assert.equal(typeof created.logs.query, "function")
     assert.equal(typeof created.database.query, "function")
+    assert.deepEqual(await created.permissions.get("files"), ["read"])
+    assert.deepEqual(await created.permissions.all(), { files: ["read"] })
+    assert.deepEqual(await created.permissions.set("files", true), { permission: ["read"], needReload: false })
+    assert.deepEqual(await created.permissions.delete("files"), { permission: null, needReload: false })
     assert.equal((await created.icon()).type, "image/png")
     assert.equal(await created.agent(), "Program agent")
     await created.data.write("state.txt", "canonical")
     assert.equal(await created.data.text("state.txt"), "canonical")
     assert.equal(await created.store.get("state"), "stored")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
-    assert.deepEqual(await created.permission.getAll(), { pointer: true })
-    assert.equal(await created.permission.get("pointer"), true)
-    await created.permission.set("pointer", false)
-    await created.permission.delete("pointer")
     assert.equal(await created.waitFor("uninstall"), true)
     assert.equal(await created.waitFor("forget"), undefined)
     assert.equal((await created.process.list())[0], started.value.process)
@@ -419,10 +422,12 @@ function programApiResult(request, home) {
   if (request.operation === "storagePath") return join(home, request.area)
   if (request.operation === "agent") return "Program agent"
   if (request.operation === "wait") return request.event === "uninstall" ? true : undefined
-  if (request.operation === "permission" && request.permissionOperation === "getAll") return { pointer: true }
-  if (request.operation === "permission" && request.permissionOperation === "get") return true
   if (request.operation === "icon") return [137, 80, 78, 71]
   if (request.operation === "store" && request.storeOperation === "get") return "stored"
   if (request.operation === "query") return [{ value: 1 }]
+  if (request.operation === "permissions" && request.permissionOperation === "get") return ["read"]
+  if (request.operation === "permissions" && request.permissionOperation === "all") return { files: ["read"] }
+  if (request.operation === "permissions" && request.permissionOperation === "set") return { permission: ["read"], needReload: false }
+  if (request.operation === "permissions" && request.permissionOperation === "delete") return { permission: null, needReload: false }
   return true
 }

@@ -52,13 +52,23 @@ import Events from "./events.js"
 import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
 import { filesystemStorage } from "./storage.js"
-import { programPermission, programSql, programStore } from "./program-resources.js"
+import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
 export type ProgramProcessRunOptions = SystemProcessRunOptions
 export type ProgramProcessRunEvent = SystemProcessRunEvent
+
+type ServiceEndpoint = ServiceKey["endpoint"]
+
+type ServiceAddress<Endpoint extends ServiceEndpoint> = Omit<ServiceKey, "endpoint"> & Readonly<{
+  endpoint: Endpoint
+}>
+
+type ServiceHandle<Endpoint extends ServiceEndpoint, EventsMap extends object, Fallback = unknown> = Endpoint extends "server"
+  ? ServerService<EventsMap, Fallback>
+  : ClientService<EventsMap, Fallback>
 
 interface SystemTransport {
   control(request: object, signal?: AbortSignal): Promise<unknown>
@@ -89,6 +99,10 @@ export class System implements CoreSystem {
   public readonly program: SystemProgram
   public readonly process: SystemProcess
   public readonly uploads: SystemUploads
+
+  public fetch(input: RequestInfo | URL, init?: RequestInit) {
+    return fetch(input, init)
+  }
 
   private constructor(address: string, connection: Socket) {
     const lifetime = new AbortController()
@@ -132,8 +146,9 @@ export class System implements CoreSystem {
     state.handles.clear()
   }
 
-  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceKey & { endpoint: "server" }): ServerService<EventsMap, Fallback>
-  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceKey & { endpoint: "client" }): ClientService<EventsMap, Fallback>
+  public service<Endpoint extends ServiceEndpoint>(key: ServiceAddress<Endpoint>): ServiceHandle<Endpoint, {}>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"server">): ServerService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"client">): ClientService<EventsMap, Fallback>
   public service(key: ServiceKey): unknown {
     requireConnected(this)
     if (!isServiceKey(key)) throw new Error("A complete service key is required")
@@ -258,9 +273,9 @@ class ProgramHandle extends ProgramBase {
   public readonly store: ProgramStore
   public readonly logs: ProgramSql
   public readonly database: ProgramSql
-  public readonly permission
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
+  public readonly permissions
   private snapshot: ProgramSnapshot
 
   public constructor(private readonly system: System, snapshot: ProgramSnapshot) {
@@ -278,9 +293,9 @@ class ProgramHandle extends ProgramBase {
     this.store = programStore(request, address)
     this.logs = programSql(request, address, "logs")
     this.database = programSql(request, address, "database")
-    this.permission = programPermission(request, address)
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
+    this.permissions = programPermissions(request, address)
   }
 
   public get name() { return this.snapshot.name }
@@ -301,7 +316,8 @@ class ProgramHandle extends ProgramBase {
       size: this.snapshot.client.size,
       position: this.snapshot.client.position,
       layer: this.snapshot.client.layer,
-      minimize: this.snapshot.client.minimize
+      minimize: this.snapshot.client.minimize,
+      permissions: Object.freeze(Object.fromEntries(Object.entries(this.snapshot.client.permissions).map(([name, values]) => [name, Object.freeze([...values])])))
     }) : null
   }
 
