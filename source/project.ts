@@ -2,6 +2,7 @@ import {
   isRelativeValue,
   layers,
   type Config,
+  type ClientDevelopment,
   type Position,
   type ProgramDefinition,
   type ServerExecution,
@@ -15,8 +16,10 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { delimiter, isAbsolute, join, normalize, resolve, sep } from "node:path"
 import { createJiti } from "jiti"
+import DevelopmentClient from "./development-client.js"
 
 const configFile = "phresh.config.ts"
+const defaultClientPort = 5200
 
 /** One loaded Program authoring project rooted at an absolute directory. */
 export class Project {
@@ -75,10 +78,10 @@ export class Project {
     return this.definition("development")
   }
 
-  private definition(mode: ProjectMode): ProgramDefinition {
+  private definition(mode: ProjectMode, developmentClientUrl?: string): ProgramDefinition {
     const config = this.config
     const server = serverHalf(config.server, mode)
-    const client = clientHalf(config.client, mode)
+    const client = clientHalf(config.client, mode, developmentClientUrl)
 
     if (mode === "development" && !config.server?.development && !config.client?.development) {
       throw new Error("Nothing here says how this Program is developed")
@@ -142,9 +145,42 @@ export class Project {
     return await this.run(system, this.productionDefinition(), options)
   }
 
-  /** Return this Project's development Process lifecycle generator. */
+  /** Prepare this Project's Client development source and return its Process lifecycle. */
   public async dev(system: SystemContract, options: ProjectRunOptions = {}) {
-    return await this.run(system, this.developmentDefinition(), options)
+    const development = this.config.client?.development
+    const startsClient = Boolean(development && (this.config.client?.start ?? true))
+
+    if (!startsClient || !development) return await this.run(system, this.developmentDefinition(), options)
+
+    if (development.startCommand) return this.developmentRun(system, development, options)
+
+    const client = await DevelopmentClient.prepare(this.config.identity, development, this.directory, options.signal)
+
+    try {
+      const lifecycle = await this.run(system, this.definition("development", client.url), {
+        ...options,
+        signal: client.processSignal(options.signal)
+      })
+      return client.supervise(lifecycle)
+    } catch (error) {
+      await client.dispose(error)
+      throw error
+    }
+  }
+
+  private async *developmentRun(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
+    const client = await DevelopmentClient.prepare(this.config.identity, development, this.directory, options.signal)
+
+    try {
+      const lifecycle = await this.run(system, this.definition("development", client.url), {
+        ...options,
+        signal: client.processSignal(options.signal)
+      })
+      yield* client.supervise(lifecycle)
+    } catch (error) {
+      await client.dispose(error)
+      throw error
+    }
   }
 
   /** Build this Project and return its Program installation generator. */
@@ -232,10 +268,12 @@ function serverExecution(server: ServerExecution) {
   return server.startCommand !== undefined ? { startCommand: server.startCommand } : { entryFile: server.entryFile }
 }
 
-function clientHalf(half: Config["client"], mode: ProjectMode) {
+function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: string) {
   if (!half) return null
   const { development, ...declared } = half
-  return mode === "development" && development ? { ...declared, location: development.url } : declared
+  return mode === "development" && development
+    ? { ...declared, location: developmentUrl ?? development.url ?? `http://localhost:${defaultClientPort}/` }
+    : declared
 }
 
 function validateConfig(config: Config) {
@@ -273,8 +311,17 @@ function validateConfig(config: Config) {
     throw new Error(`A Client half's layer must be one of ${layers.join(", ")}`)
   }
 
-  if (config.client?.development && !httpUrl(config.client.development.url)) {
-    throw new Error("client.development.url must be a valid HTTP or HTTPS URL")
+  if (config.client?.development) {
+    const development = config.client.development
+    if (development.url !== undefined && !httpUrl(development.url)) {
+      throw new Error("client.development.url must be a valid HTTP or HTTPS URL")
+    }
+    if (development.startCommand !== undefined && (typeof development.startCommand !== "string" || !development.startCommand.trim())) {
+      throw new Error("client.development.startCommand must be non-empty text")
+    }
+    if (development.url === undefined && development.startCommand === undefined) {
+      throw new Error("client.development must declare a URL or start command")
+    }
   }
 
   for (const [name, value] of [["size", config.client?.size], ["position", config.client?.position]] as const) {

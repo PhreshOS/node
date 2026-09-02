@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { createServer as createHttpServer } from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -99,12 +100,20 @@ test("Project returns the original production Process generator without consumin
 })
 
 test("Project returns the original development and installation generators", async () => {
+  const client = createHttpServer((_request, response) => response.end())
+  await new Promise((resolve, reject) => {
+    client.once("error", reject)
+    client.listen(0, "localhost", resolve)
+  })
+  const address = client.address()
+  assert.equal(typeof address, "object")
+
   const project = Project.define({
     identity: "example",
     client: {
       location: "dist/client",
       permissions: { files: true },
-      development: { url: "https://localhost.example/client/" }
+      development: { url: `http://localhost:${address.port}/` }
     }
   })
   const development = (async function* () {})()
@@ -120,12 +129,16 @@ test("Project returns the original development and installation generators", asy
     }
   }
 
-  assert.equal(await project.dev(system), development)
-  assert.equal(await project.install(system), installation)
-  assert.equal(definitions[0].client.location, "https://localhost.example/client/")
-  assert.deepEqual(definitions[0].client.permissions, { files: true })
-  assert.deepEqual(definitions[1].client.permissions, { files: true })
-  assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
+  try {
+    assert.equal(await project.dev(system), development)
+    assert.equal(await project.install(system), installation)
+    assert.equal(definitions[0].client.location, `http://localhost:${address.port}/`)
+    assert.deepEqual(definitions[0].client.permissions, { files: true })
+    assert.deepEqual(definitions[1].client.permissions, { files: true })
+    assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
+  } finally {
+    await new Promise((resolve, reject) => client.close(error => error ? reject(error) : resolve()))
+  }
 })
 
 test("Project keeps an HTTP development Client location as a runtime location", () => {

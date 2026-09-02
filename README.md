@@ -49,6 +49,11 @@ await system.disconnect()
 definitions, installation, execution shortcuts, and packaging. The System
 receives only the resulting Program definition.
 
+`Project.dev()` starts and supervises a declared Client development command. It
+assigns an available port when no URL is declared and provides the port and
+public Program asset base through `PHRESHOS_CLIENT_PORT` and
+`PHRESHOS_CLIENT_BASE`.
+
 `Project.open()` starts from the current working directory by default.
 `System.connect()` resolves an explicit System home, then `PHRESHOS_HOME`,
 then the current owner's default System home.
