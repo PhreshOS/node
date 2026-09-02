@@ -2,13 +2,22 @@ import type { EntryStat, SystemStorage } from "@phreshos/core"
 import { randomUUID } from "node:crypto"
 import { createReadStream, createWriteStream, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs"
 import { rm } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 
 /** Create one filesystem implementation bounded beneath a resolved absolute root. */
 export function filesystemStorage(source: string | (() => Promise<string>), label: string): SystemStorage {
+  return createStorage(source, label, contained)
+}
+
+/** Create native filesystem access entered from one resolved absolute path. */
+export function nativeStorage(source: string | (() => Promise<string>), label: string): SystemStorage {
+  return createStorage(source, label, (root, parts) => resolvePath(root, ...parts))
+}
+
+function createStorage(source: string | (() => Promise<string>), label: string, locate: Locator): SystemStorage {
   let root: Promise<string> | null = null
 
   const resolveRoot = () => {
@@ -20,7 +29,7 @@ export function filesystemStorage(source: string | (() => Promise<string>), labe
   }
 
   const path = () => resolveRoot()
-  const resolve = async (...parts: string[]) => contained(await path(), parts)
+  const resolve = async (...parts: string[]) => locate(await path(), parts)
 
   async function stream(...parts: [string, ...string[]]) {
     const destination = await resolve(...parts)
@@ -71,6 +80,8 @@ export function filesystemStorage(source: string | (() => Promise<string>), labe
     }
   }
 }
+
+type Locator = (root: string, parts: string[]) => string
 
 function content(value: unknown): ReadableStream<Uint8Array> {
   if (value instanceof ReadableStream) return value

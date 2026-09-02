@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { homedir, tmpdir } from "node:os"
+import { dirname, join } from "node:path"
 import test from "node:test"
 import { Client, ClientService, Endpoint, Process, Program, Project, Server, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
 
@@ -164,11 +164,15 @@ test("System.connect exposes the shared System contract over one owner-local add
 
   const system = await System.connect(home)
   try {
+    const userHome = await realpath(homedir())
+
     assert.equal("home" in system, false)
     assert.equal("address" in system, false)
     assert.equal("transport" in system, false)
     assert.equal("programHandle" in system, false)
     assert.equal("processHandle" in system, false)
+    assert.equal(await system.storage.path(), userHome)
+    assert.equal(await system.storage.resolve(".."), dirname(userHome))
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
 
     const serverService = system.service({ program: "example", process: "main", endpoint: "server" })

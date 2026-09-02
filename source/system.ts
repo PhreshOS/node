@@ -51,7 +51,7 @@ import { gatewayAddress } from "./address.js"
 import Events from "./events.js"
 import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
-import { filesystemStorage } from "./storage.js"
+import { filesystemStorage, nativeStorage } from "./storage.js"
 import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
@@ -94,7 +94,7 @@ const ClientBase = CoreClient as unknown as new () => object
 
 /** One connected owner-local implementation of the shared System contract. */
 export class System implements CoreSystem {
-  public readonly storage = filesystemStorage(homedir(), "the native home directory")
+  public readonly storage = nativeStorage(homedir(), "the native filesystem")
   public readonly appearance: WritableAppearance
   public readonly program: SystemProgram
   public readonly process: SystemProcess
