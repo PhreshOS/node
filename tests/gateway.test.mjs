@@ -5,7 +5,7 @@ import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
-import { Client, ClientService, Endpoint, Process, Program, Project, Server, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
+import { ClientEndpoint, ClientService, Endpoint, Process, Program, Project, ServerEndpoint, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
 
 test("Project.open discovers phresh.config.ts from cwd by default", async () => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
@@ -36,7 +36,7 @@ test("resolveHome follows argument, environment, then owner default", () => {
   assert.equal(resolveHome(undefined, {}, "/owner"), "/owner/.phreshos")
 })
 
-test("Project derives one Server execution mode without retaining the other", () => {
+test("Project derives one Server Endpoint execution mode without retaining the other", () => {
   const directory = join(process.cwd(), "project")
   const project = Project.define({
     identity: "worker-program",
@@ -123,6 +123,7 @@ test("Project returns the original development and installation generators", asy
     async forceCreateProgram(definition) {
       definitions.push(definition)
       return {
+        assetId: "00000000-0000-4000-8000-000000000000",
         process: { run: () => development },
         install: () => installation
       }
@@ -141,7 +142,7 @@ test("Project returns the original development and installation generators", asy
   }
 })
 
-test("Project keeps an HTTP development Client location as a runtime location", () => {
+test("Project keeps an HTTP development Client Endpoint location as a runtime location", () => {
   const project = Project.define({
     identity: "web-client",
     client: {
@@ -225,6 +226,7 @@ test("a Process run is addressed to the exact Program and follows its signal", a
   const program = {
     reference: "program-reference",
     identity: "example",
+    assetId: "00000000-0000-4000-8000-000000000001",
     name: "Example",
     version: null,
     description: null,
@@ -232,8 +234,8 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     server: { start: true, service: false },
     client: null
   }
-  const replacement = { ...program, reference: "replacement-reference" }
-  const forkedProgram = { ...program, reference: "forked-reference", identity: "forked" }
+  const replacement = { ...program, reference: "replacement-reference", assetId: "00000000-0000-4000-8000-000000000002" }
+  const forkedProgram = { ...program, reference: "forked-reference", identity: "forked", assetId: "00000000-0000-4000-8000-000000000003" }
   const process = {
     reference: "process-reference",
     identity: "process-identity",
@@ -337,6 +339,7 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     })
 
     assert.equal(created instanceof Program, true)
+    assert.equal(created.assetId, program.assetId)
 
     const controller = new AbortController()
     const iterator = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
@@ -346,9 +349,9 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(started.value.process.identity, process.identity)
     assert.equal(started.value.process instanceof Process, true)
     assert.equal(started.value.process.program(), created)
-    assert.equal(started.value.process.server instanceof Server, true)
+    assert.equal(started.value.process.server instanceof ServerEndpoint, true)
     assert.equal(started.value.process.server instanceof Endpoint, true)
-    assert.equal(started.value.process.client instanceof Client, true)
+    assert.equal(started.value.process.client instanceof ClientEndpoint, true)
     assert.equal(started.value.process.client instanceof Endpoint, true)
     assert.equal(await started.value.process.server.process(), started.value.process)
     assert.equal(typeof created.data.text, "function")

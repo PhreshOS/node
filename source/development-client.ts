@@ -1,4 +1,4 @@
-import type { ClientDevelopment, SystemProcessRunEvent } from "@phreshos/core"
+import type { ClientDevelopment, ProgramProcessRunEvent } from "@phreshos/core"
 import { spawn, type ChildProcess } from "node:child_process"
 import { connect, createServer } from "node:net"
 import { delimiter, join } from "node:path"
@@ -10,49 +10,53 @@ const pollingInterval = 200
 export default class DevelopmentClient {
   public readonly url: string
 
-  private readonly command: OwnedCommand | null
-  private readonly controller: AbortController
-  private readonly releaseSignal: () => void
+  private readonly startCommand: string | null
+  private readonly directory: string
+  private command: OwnedCommand | null = null
+  private controller: AbortController | null = null
+  private releaseSignal: () => void = () => undefined
 
-  private constructor(url: string, command: OwnedCommand | null, controller: AbortController, releaseSignal: () => void) {
+  private constructor(url: string, startCommand: string | null, directory: string) {
     this.url = url
-    this.command = command
-    this.controller = controller
-    this.releaseSignal = releaseSignal
+    this.startCommand = startCommand
+    this.directory = directory
   }
 
-  public static async prepare(identity: string, development: ClientDevelopment, directory: string, signal?: AbortSignal) {
-    const base = `/program/${identity}/assets/`
+  /** Select the development address without starting the authored command. */
+  public static async prepare(development: ClientDevelopment, directory: string) {
     const url = development.url ?? `http://localhost:${await availablePort()}/`
+    if (development.startCommand) await assertAvailable(url)
+    return new DevelopmentClient(url, development.startCommand ?? null, directory)
+  }
+
+  /** Start and verify the Client beneath its System-created asset address. */
+  public async start(assetId: string, signal?: AbortSignal) {
+    if (this.controller) throw new Error("The Client development source has already started")
+
+    const base = `/program/${assetId}/assets/`
     const controller = new AbortController()
-    const releaseSignal = forwardAbort(signal, controller)
-    let command: OwnedCommand | null = null
+    this.controller = controller
+    this.releaseSignal = forwardAbort(signal, controller)
 
     try {
-      if (development.startCommand) {
-        await assertAvailable(url)
-        command = new OwnedCommand(development.startCommand, directory, {
+      if (this.startCommand) {
+        this.command = new OwnedCommand(this.startCommand, this.directory, {
           PHRESHOS_CLIENT_BASE: base,
-          PHRESHOS_CLIENT_PORT: String(portOf(url))
+          PHRESHOS_CLIENT_PORT: String(portOf(this.url))
         })
       }
-
-      const client = new DevelopmentClient(url, command, controller, releaseSignal)
-      await client.waitUntilReady(new URL(base, url).href)
-      return client
+      await this.waitUntilReady(new URL(base, this.url).href)
     } catch (error) {
-      releaseSignal()
-      controller.abort(error)
-      await command?.stop()
+      await this.dispose(error)
       throw error
     }
   }
 
   public processSignal(fallback?: AbortSignal) {
-    return this.command ? this.controller.signal : fallback
+    return this.command ? this.controller?.signal : fallback
   }
 
-  public supervise(lifecycle: AsyncGenerator<SystemProcessRunEvent, void, void>) {
+  public supervise(lifecycle: AsyncGenerator<ProgramProcessRunEvent, void, void>) {
     if (!this.command) {
       this.releaseSignal()
       return lifecycle
@@ -62,7 +66,7 @@ export default class DevelopmentClient {
 
   public async dispose(reason: unknown) {
     this.releaseSignal()
-    this.controller.abort(reason)
+    this.controller?.abort(reason)
     await this.command?.stop()
   }
 
@@ -70,7 +74,7 @@ export default class DevelopmentClient {
     const deadline = Date.now() + readinessTimeout
 
     while (Date.now() < deadline) {
-      this.controller.signal.throwIfAborted()
+      this.controller!.signal.throwIfAborted()
 
       const exit = this.command?.exitResult()
       if (exit) throw commandFailure(exit)
@@ -83,13 +87,13 @@ export default class DevelopmentClient {
         if (response.ok) return
       } catch { /* The development server is still starting. */ }
 
-      await pause(Math.min(pollingInterval, Math.max(0, deadline - Date.now())), this.controller.signal)
+      await pause(Math.min(pollingInterval, Math.max(0, deadline - Date.now())), this.controller!.signal)
     }
 
     throw new Error(`Client development URL did not respond within 15 seconds: ${url}`)
   }
 
-  private async *supervisedLifecycle(lifecycle: AsyncGenerator<SystemProcessRunEvent, void, void>) {
+  private async *supervisedLifecycle(lifecycle: AsyncGenerator<ProgramProcessRunEvent, void, void>) {
     const iterator = lifecycle[Symbol.asyncIterator]()
     const command = this.command!
 
@@ -106,7 +110,7 @@ export default class DevelopmentClient {
 
         if (outcome.source === "client") {
           const error = commandFailure(outcome.result)
-          this.controller.abort(error)
+          this.controller?.abort(error)
           await next.catch(() => undefined)
           throw error
         }

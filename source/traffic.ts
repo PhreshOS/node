@@ -80,7 +80,7 @@ export class EndpointTrafficHandle<Definitions extends object = {}> extends Even
   }
 }
 
-/** Directed traffic originating from one canonical Server. */
+/** Directed traffic originating from one canonical Server Endpoint. */
 export class ServerTrafficHandle<Definitions extends object = {}>
   extends EndpointTrafficHandle<Definitions>
   implements ServerTraffic<Definitions> {

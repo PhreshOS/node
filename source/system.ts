@@ -1,10 +1,10 @@
 import {
-  Client as CoreClient,
+  ClientEndpoint as CoreClientEndpoint,
   ClientService as CoreClientService,
   Endpoint as CoreEndpoint,
   Process as CoreProcess,
   Program as CoreProgram,
-  Server as CoreServer,
+  ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   isServiceKey,
   type Appearance,
@@ -21,25 +21,20 @@ import {
   type ProgramCommandChunk,
   type ProgramIconSize,
   type ProgramProcessEvents,
+  type ProgramProcessRunEvent as CoreProgramProcessRunEvent,
+  type ProgramProcessRunOptions as CoreProgramProcessRunOptions,
   type ProgramSql,
   type ProgramStore,
   type ProcessEvents,
   type ServiceKey,
   type Size,
   type System as CoreSystem,
-  type SystemClientEntity,
-  type SystemEndpointEntity,
-  type SystemProcessEntity,
   type SystemProcessEvents,
   type SystemProcess,
-  type SystemProcessRunEvent,
-  type SystemProcessRunOptions,
   type SystemProgram,
-  type SystemProgramEntity,
   type SystemProgramEvents,
-  type SystemServerEntity,
   type SystemUploads,
-  type SystemStorage,
+  type Storage,
   type WritableAppearance,
   type Window,
   type WindowEvents,
@@ -57,8 +52,8 @@ import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
-export type ProgramProcessRunOptions = SystemProcessRunOptions
-export type ProgramProcessRunEvent = SystemProcessRunEvent
+export type ProgramProcessRunOptions = CoreProgramProcessRunOptions
+export type ProgramProcessRunEvent = CoreProgramProcessRunEvent
 
 type ServiceEndpoint = ServiceKey["endpoint"]
 
@@ -89,8 +84,8 @@ const systems = new WeakMap<System, SystemState>()
 
 const ProgramBase = CoreProgram as unknown as new () => object
 const ProcessBase = CoreProcess as unknown as new () => object
-const ServerBase = CoreServer as unknown as new () => object
-const ClientBase = CoreClient as unknown as new () => object
+const ServerEndpointBase = CoreServerEndpoint as unknown as new () => object
+const ClientEndpointBase = CoreClientEndpoint as unknown as new () => object
 
 /** One connected owner-local implementation of the shared System contract. */
 export class System implements CoreSystem {
@@ -128,7 +123,7 @@ export class System implements CoreSystem {
   }
 
   /** Atomically replace one runtime Program without touching its installed form. */
-  public async forceCreateProgram(source: ProgramDefinition | string): Promise<SystemProgramEntity> {
+  public async forceCreateProgram(source: ProgramDefinition | string): Promise<Program> {
     requireConnected(this)
     for await (const event of transport(this).lifecycle({ word: "force-create", program: source })) {
       if (event.event === "created") return programHandle(this, required(event.program as ProgramSnapshot | undefined))
@@ -263,13 +258,13 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   }
 }
 
-interface ProgramHandle extends SystemProgramEntity {}
+interface ProgramHandle extends Program {}
 
 class ProgramHandle extends ProgramBase {
   private readonly reference: string
   public readonly identity: string
-  public readonly data: SystemStorage
-  public readonly cache: SystemStorage
+  public readonly data: Storage
+  public readonly cache: Storage
   public readonly store: ProgramStore
   public readonly logs: ProgramSql
   public readonly database: ProgramSql
@@ -299,6 +294,7 @@ class ProgramHandle extends ProgramBase {
   }
 
   public get name() { return this.snapshot.name }
+  public get assetId() { return this.snapshot.assetId }
   public get version() { return this.snapshot.version }
   public get description() { return this.snapshot.description }
   public get hasAgent() { return this.snapshot.hasAgent }
@@ -488,7 +484,7 @@ class ProcessRegistry extends Events<SystemProcessEvents> {
   }
 }
 
-interface ProcessHandle extends SystemProcessEntity {}
+interface ProcessHandle extends Process {}
 
 class ProcessHandle extends ProcessBase {
   public readonly identity: string
@@ -505,8 +501,8 @@ class ProcessHandle extends ProcessBase {
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
-    this.server = new ServerEndpoint(system, this)
-    this.client = new ClientEndpoint(system, this)
+    this.server = new ServerEndpointHandle(system, this)
+    this.client = new ClientEndpointHandle(system, this)
   }
 
   public program() { return programHandle(this.system, required(this.snapshot.programSnapshot, this.snapshot.program)) }
@@ -589,9 +585,9 @@ class EndpointOperations extends Events<{}, unknown> {
   }
 }
 
-interface ServerEndpoint extends SystemServerEntity {}
+interface ServerEndpointHandle extends CoreServerEndpoint {}
 
-class ServerEndpoint extends ServerBase {
+class ServerEndpointHandle extends ServerEndpointBase {
   public readonly endpoint = "server" as const
   public readonly traffic: ServerTrafficHandle
   public readonly lifecycle: EndpointLifecycle
@@ -632,9 +628,9 @@ class ServerEndpoint extends ServerBase {
 
 }
 
-interface ClientEndpoint extends SystemClientEntity {}
+interface ClientEndpointHandle extends CoreClientEndpoint {}
 
-class ClientEndpoint extends ClientBase {
+class ClientEndpointHandle extends ClientEndpointBase {
   public readonly endpoint = "client" as const
   public readonly traffic: EndpointTrafficHandle
   public readonly lifecycle: EndpointLifecycle
@@ -715,7 +711,7 @@ class ServiceBase {
   }
 }
 
-/** Node-SDK handle for a Service provided by a Server Endpoint. */
+/** Node SDK handle for a Service provided by a Server Endpoint. */
 export class ServerService<EventsMap extends object = {}, Fallback = unknown> extends CoreServerService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
@@ -746,7 +742,7 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   }
 }
 
-/** Node-SDK handle for a Service provided by a Client Endpoint. */
+/** Node SDK handle for a Service provided by a Client Endpoint. */
 export class ClientService<EventsMap extends object = {}, Fallback = unknown> extends CoreClientService<EventsMap, Fallback> {
   protected constructor() { super() }
 }
@@ -852,7 +848,7 @@ function eventsOf<Definitions extends object, Fallback>(events: Events<Definitio
   }
 }
 
-function chronological(left: SystemProcessEntity, right: SystemProcessEntity) { return left.startedAt.getTime() - right.startedAt.getTime() }
+function chronological(left: Process, right: Process) { return left.startedAt.getTime() - right.startedAt.getTime() }
 async function programStoragePath(system: System, handle: ReturnType<ProgramHandle["address"]>, area: "data" | "cache") {
   const value = await transport(system).api({ capability: "program", operation: "storagePath", handle, area })
   if (typeof value !== "string") throw new Error("The System returned an invalid Program storage path")
@@ -892,6 +888,7 @@ interface Page<Value> { data: Value[], total: number, truncated: boolean }
 interface ProgramSnapshot {
   reference: string
   identity: string
+  assetId: string
   name: string
   version: string | null
   description: string | null
@@ -934,17 +931,17 @@ interface WindowSnapshot {
   location: string
 }
 
-export type Program = SystemProgramEntity
+export type Program = CoreProgram
 export const Program = CoreProgram
 
-export type Process = SystemProcessEntity
+export type Process = CoreProcess
 export const Process = CoreProcess
 
-export type Endpoint<EventsMap extends object = {}, Fallback = unknown> = SystemEndpointEntity<EventsMap, Fallback>
+export type Endpoint<EventsMap extends object = {}, Fallback = unknown> = CoreEndpoint<EventsMap, Fallback>
 export const Endpoint = CoreEndpoint
 
-export type Server<EventsMap extends object = {}, Fallback = unknown> = SystemServerEntity<EventsMap, Fallback>
-export const Server = CoreServer
+export type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreServerEndpoint<EventsMap, Fallback>
+export const ServerEndpoint = CoreServerEndpoint
 
-export type Client<EventsMap extends object = {}, Fallback = unknown> = SystemClientEntity<EventsMap, Fallback>
-export const Client = CoreClient
+export type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>
+export const ClientEndpoint = CoreClientEndpoint

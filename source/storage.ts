@@ -1,4 +1,4 @@
-import type { EntryStat, SystemStorage } from "@phreshos/core"
+import type { EntryStat, Storage } from "@phreshos/core"
 import { randomUUID } from "node:crypto"
 import { createReadStream, createWriteStream, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs"
 import { rm } from "node:fs/promises"
@@ -8,16 +8,16 @@ import { pipeline } from "node:stream/promises"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
 
 /** Create one filesystem implementation bounded beneath a resolved absolute root. */
-export function filesystemStorage(source: string | (() => Promise<string>), label: string): SystemStorage {
+export function filesystemStorage(source: string | (() => Promise<string>), label: string): Storage {
   return createStorage(source, label, contained)
 }
 
 /** Create native filesystem access entered from one resolved absolute path. */
-export function nativeStorage(source: string | (() => Promise<string>), label: string): SystemStorage {
+export function nativeStorage(source: string | (() => Promise<string>), label: string): Storage {
   return createStorage(source, label, (root, parts) => resolvePath(root, ...parts))
 }
 
-function createStorage(source: string | (() => Promise<string>), label: string, locate: Locator): SystemStorage {
+function createStorage(source: string | (() => Promise<string>), label: string, locate: Locator): Storage {
   let root: Promise<string> | null = null
 
   const resolveRoot = () => {

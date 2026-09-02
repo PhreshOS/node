@@ -1,29 +1,29 @@
 import type {
+  ClientEndpoint as CoreClientEndpoint,
+  Endpoint as CoreEndpoint,
+  Program as CoreProgram,
+  ServerEndpoint as CoreServerEndpoint,
   System as CoreSystem,
-  SystemClientEntity,
-  SystemEndpointEntity,
-  SystemProgramEntity,
-  SystemServerEntity,
   Service,
   ServiceKey
 } from "@phreshos/core"
-import type { Client, Endpoint, Program, Server, System } from "../source/main.js"
+import type { ClientEndpoint, Endpoint, Program, ServerEndpoint, System } from "../source/main.js"
 
 declare const connected: System
 declare const canonical: CoreSystem
 declare const program: Program
-declare const canonicalProgram: SystemProgramEntity
+declare const canonicalProgram: CoreProgram
 declare const endpoint: Endpoint<{ change: number }, string>
-declare const server: Server<{ change: number }, string>
-declare const client: Client<{ change: number }, string>
+declare const server: ServerEndpoint<{ change: number }, string>
+declare const client: ClientEndpoint<{ change: number }, string>
 declare const serviceEndpoint: ServiceKey["endpoint"]
 
 const shared: CoreSystem = connected
-const sameProgram: SystemProgramEntity = program
+const sameProgram: CoreProgram = program
 const nodeProgram: Program = canonicalProgram
-const sameEndpoint: SystemEndpointEntity<{ change: number }, string> = endpoint
-const sameServer: SystemServerEntity<{ change: number }, string> = server
-const sameClient: SystemClientEntity<{ change: number }, string> = client
+const sameEndpoint: CoreEndpoint<{ change: number }, string> = endpoint
+const sameServer: CoreServerEndpoint<{ change: number }, string> = server
+const sameClient: CoreClientEndpoint<{ change: number }, string> = client
 const service: Service = connected.service({ program: "example", process: "main", endpoint: serviceEndpoint })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>

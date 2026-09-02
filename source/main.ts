@@ -1,11 +1,11 @@
 export { gatewayAddress } from "./address.js"
 export {
-  Client,
+  ClientEndpoint,
   ClientService,
   Endpoint,
   Process,
   Program,
-  Server,
+  ServerEndpoint,
   ServerService,
   System,
   type ProgramProcessRunEvent,
@@ -23,8 +23,8 @@ export {
   type ProgramDefinition,
   type ServerLaunch,
   type ServiceKey,
-  type SystemProgramStartup,
-  type SystemStorage,
+  type ProgramStartup,
+  type Storage,
 } from "@phreshos/core"
 export { resolveHome } from "./home.js"
 export {

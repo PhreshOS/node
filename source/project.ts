@@ -154,31 +154,27 @@ export class Project {
 
     if (development.startCommand) return this.developmentRun(system, development, options)
 
-    const client = await DevelopmentClient.prepare(this.config.identity, development, this.directory, options.signal)
-
-    try {
-      const lifecycle = await this.run(system, this.definition("development", client.url), {
-        ...options,
-        signal: client.processSignal(options.signal)
-      })
-      return client.supervise(lifecycle)
-    } catch (error) {
-      await client.dispose(error)
-      throw error
-    }
+    const prepared = await this.prepareDevelopment(system, development, options)
+    return prepared.client.supervise(prepared.lifecycle)
   }
 
   private async *developmentRun(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
-    const client = await DevelopmentClient.prepare(this.config.identity, development, this.directory, options.signal)
+    const prepared = await this.prepareDevelopment(system, development, options)
+
+    yield* prepared.client.supervise(prepared.lifecycle)
+  }
+
+  private async prepareDevelopment(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
+    const client = await DevelopmentClient.prepare(development, this.directory)
+    const program = await system.forceCreateProgram(this.definition("development", client.url))
 
     try {
-      const lifecycle = await this.run(system, this.definition("development", client.url), {
-        ...options,
-        signal: client.processSignal(options.signal)
-      })
-      yield* client.supervise(lifecycle)
+      await client.start(program.assetId, options.signal)
+      const lifecycle = program.process.run({ options: options.options ?? {} }, { signal: client.processSignal(options.signal) })
+      return { client, lifecycle }
     } catch (error) {
       await client.dispose(error)
+      await program.forget().catch(() => undefined)
       throw error
     }
   }
@@ -280,7 +276,7 @@ function validateConfig(config: Config) {
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
     throw new Error("A Program's identity must be kebab-case")
   }
-  if (!config.server && !config.client) throw new Error("A Program must have a Server half, a Client half, or both")
+  if (!config.server && !config.client) throw new Error("A Program must have a Server Endpoint, a Client Endpoint, or both")
 
   for (const field of ["name", "version", "description", "icon", "agent", "website"] as const) {
     if (config[field] !== undefined && typeof config[field] !== "string") throw new Error(`A Program's ${field} must be text`)
@@ -304,11 +300,11 @@ function validateConfig(config: Config) {
     throw new Error("A Program's default Process must start a Server Endpoint, a Client Endpoint, or both")
   }
 
-  if (config.server) execution(config.server, "A Server half")
+  if (config.server) execution(config.server, "A Server Endpoint")
   if (config.server?.development) execution(config.server.development, "server.development")
 
   if (config.client?.layer !== undefined && !layers.includes(config.client.layer)) {
-    throw new Error(`A Client half's layer must be one of ${layers.join(", ")}`)
+    throw new Error(`A Client Endpoint's layer must be one of ${layers.join(", ")}`)
   }
 
   if (config.client?.development) {

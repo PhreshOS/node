@@ -28,10 +28,12 @@ test("a Client development command receives its assigned address", async context
 
   let definition
   const process = { identity: "development-process" }
+  const assetId = "00000000-0000-4000-8000-000000000000"
   const system = {
     async forceCreateProgram(value) {
       definition = value
       return {
+        assetId,
         process: {
           async *run() {
             yield { event: "started", process }
@@ -60,7 +62,7 @@ test("a Client development command receives its assigned address", async context
   const environment = JSON.parse(await readFile(observation, "utf8"))
 
   assert.deepEqual(events, ["started", "exited"])
-  assert.equal(environment.base, "/program/development-program/assets/")
+  assert.equal(environment.base, `/program/${assetId}/assets/`)
   assert.equal(Number.isInteger(environment.port), true)
   assert.equal(definition.client.location, `http://localhost:${environment.port}/`)
   await assert.rejects(fetch(definition.client.location))
