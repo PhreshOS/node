@@ -1,28 +1,27 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
 import { createServer as createHttpServer } from "node:http"
-import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { System, gatewayAddress } from "../dist/main.js"
+import { createGateway } from "./gateway-fixture.mjs"
 
 test("System.shell executes locally and belongs to its System connection", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-shell-"))
   const address = gatewayAddress(home)
   let connections = 0
   let ownerConnection
-  const server = createServer(socket => {
-    connections += 1
-    ownerConnection = socket
+  const server = createGateway(address, {
+    connected(peer) {
+      connections += 1
+      ownerConnection = peer
+    }
   })
   const http = createHttpServer(() => undefined)
 
   await mkdir(home, { recursive: true })
-  await new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(address, resolve)
-  })
+  await server.listen()
   await new Promise((resolve, reject) => {
     http.once("error", reject)
     http.listen(0, "127.0.0.1", resolve)
@@ -53,7 +52,7 @@ test("System.shell executes locally and belongs to its System connection", async
     const shellClosed = assert.rejects(waiting, /System connection is closed/)
     const fetchClosed = assert.rejects(fetching, /System connection is closed/)
 
-    ownerConnection.destroy()
+    await ownerConnection.disconnect()
     await shellClosed
     await fetchClosed
     await assert.rejects(system.storage.path(), /System connection is closed/)
@@ -63,7 +62,7 @@ test("System.shell executes locally and belongs to its System connection", async
     await system.disconnect()
     http.closeAllConnections()
     await new Promise(resolve => http.close(resolve))
-    await new Promise(resolve => server.close(resolve))
+    await server.close()
     await rm(home, { recursive: true, force: true })
   }
 })

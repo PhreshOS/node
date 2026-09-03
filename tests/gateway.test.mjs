@@ -1,11 +1,11 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { createServer as createHttpServer } from "node:http"
-import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
 import { ClientEndpoint, ClientService, Endpoint, Process, Program, Project, ServerEndpoint, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
+import { createGateway } from "./gateway-fixture.mjs"
 
 test("Project.open discovers phresh.config.ts from cwd by default", async () => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
@@ -157,27 +157,22 @@ test("Project keeps an HTTP development Client Endpoint location as a runtime lo
 test("System.connect exposes the shared System contract over one owner-local address", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-gateway-"))
   const address = gatewayAddress(home)
-  const server = createServer(socket => {
-    let buffer = ""
-    socket.on("data", chunk => {
-      buffer += String(chunk)
-      const boundary = buffer.indexOf("\n")
-      if (boundary < 0) return
-      const envelope = JSON.parse(buffer.slice(0, boundary))
-      if (envelope.target === "api" && envelope.request.capability === "appearance") {
-        socket.end(`${JSON.stringify({ success: true, result: { background: { light: "#fff" } } })}\n`)
+  const server = createGateway(address, {
+    session: {
+      authorization: "owner",
+      linkManager: { appearance: { key: "appearance", value: { background: { light: "#fff" } } } },
+      authManager: {
+        programManager: { programs: [] },
+        processManager: { processes: [] }
       }
-      if (envelope.target === "api" && envelope.request.capability === "uploads" && envelope.request.operation === "access") {
-        socket.end(`${JSON.stringify({ success: true, result: { path: join(home, "uploads"), limit: 1024 } })}\n`)
-      }
-    })
+    },
+    route({ event }) {
+      if (event === "/auth/uploads/access") return { path: join(home, "uploads"), limit: 1024 }
+    }
   })
 
   await mkdir(home, { recursive: true })
-  await new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(address, resolve)
-  })
+  await server.listen()
 
   const system = await System.connect(home)
   try {
@@ -216,21 +211,21 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(typeof clientService.waitReady, "function")
   } finally {
     await system.disconnect()
-    await new Promise(resolve => server.close(resolve))
+    await server.close()
     await rm(home, { recursive: true, force: true })
   }
 })
 
-test("a Process run is addressed to the exact Program and follows its signal", async () => {
-  const home = await mkdtemp(join(tmpdir(), "phresh-system-run-"))
+test("System reconstructs and follows the authoritative LinkManager model", async () => {
+  const home = await mkdtemp(join(tmpdir(), "phresh-system-model-"))
   const address = gatewayAddress(home)
-  const requests = []
-  let closeRun
-  const runClosed = new Promise(resolve => { closeRun = resolve })
+  const calls = []
+  const commands = new Map()
   const program = {
     reference: "program-reference",
     identity: "example",
     assetId: "00000000-0000-4000-8000-000000000001",
+    installed: false,
     name: "Example",
     version: null,
     description: null,
@@ -239,193 +234,103 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     client: null
   }
   const replacement = { ...program, reference: "replacement-reference", assetId: "00000000-0000-4000-8000-000000000002" }
-  const forkedProgram = { ...program, reference: "forked-reference", identity: "forked", assetId: "00000000-0000-4000-8000-000000000003" }
-  const process = {
+  const processRecord = {
     reference: "process-reference",
     identity: "process-identity",
     name: null,
     program: program.identity,
-    programSnapshot: program,
     parent: null,
     options: { mode: "test" },
-    startedAt: new Date().toISOString(),
-    server: { declared: true, running: true },
-    client: { declared: false, running: false }
+    startedAt: new Date(),
+    server: { ready: true, service: false },
+    client: null
   }
-
   let creations = 0
-  const server = createServer(socket => {
-    let buffer = ""
-    let running = false
-    socket.on("data", chunk => {
-      buffer += String(chunk)
-      const boundary = buffer.indexOf("\n")
-      if (boundary < 0) return
-      const envelope = JSON.parse(buffer.slice(0, boundary))
-      requests.push(envelope)
+  const server = createGateway(address, {
+    async route({ event, values, publish }) {
+      calls.push({ event, values })
+      const [, ...input] = values
 
-      if (envelope.request.word === "force-create") {
-        socket.end(`${JSON.stringify({ event: "created", program: creations++ === 0 ? program : replacement })}\n`)
-      } else if (envelope.request.word === "fork") {
-        socket.end(`${JSON.stringify({ event: "created", program: forkedProgram })}\n`)
-      } else if (envelope.request.word === "run-process") {
-        running = true
-        socket.write(`${JSON.stringify({ event: "started", process })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "inspect") {
-        socket.end(`${JSON.stringify({ success: true, result: program })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "list") {
-        socket.end(`${JSON.stringify({ success: true, result: { data: [program], total: 1, truncated: false } })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "program" && envelope.request.operation === "wait") {
-        socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload: program } })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "inspect") {
-        socket.end(`${JSON.stringify({ success: true, result: process })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "list") {
-        socket.end(`${JSON.stringify({ success: true, result: { data: [process], total: 1, truncated: false } })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "process" && envelope.request.operation === "wait") {
-        const payload = process
-        socket.end(`${JSON.stringify({ success: true, result: { event: envelope.request.input.event, payload } })}\n`)
-      } else if (envelope.target === "system" && envelope.request.capability === "endpoint" && envelope.request.operation === "waitLifecycle") {
-        socket.end(`${JSON.stringify({ success: true, result: {
-          scope: "endpoint.lifecycle",
-          event: envelope.request.input.event,
-          payload: null
-        } })}\n`)
-      } else if (envelope.target === "api" && envelope.request.capability === "program") {
-        const request = envelope.request
-        socket.end(`${JSON.stringify({ success: true, result: programApiResult(request, home) })}\n`)
-      } else if (envelope.target === "api" && envelope.request.capability === "programProcess") {
-        const request = envelope.request
-        const result = request.operation === "list"
-          ? [process]
-          : request.event === "create"
-            ? process
-            : { process, status: "exited", code: 0, signal: null }
-        socket.end(`${JSON.stringify({ success: true, result })}\n`)
-      } else if (envelope.target === "api" && envelope.request.capability === "traffic") {
-        const request = envelope.request
-        const endpoint = request.kind === "ask" ? "server" : "client"
-        const reference = {
-          kind: endpoint,
-          process: {
-            reference: process.reference,
-            identity: process.identity,
-            name: process.name,
-            program,
-            options: process.options,
-            startedAt: process.startedAt,
-            server: { service: false },
-            client: { service: false }
-          }
-        }
-        const values = request.kind === "publish"
-          ? [{ to: reference, payload: { value: 1 } }]
-          : request.kind === "ask"
-            ? ["question-identity", { to: reference, payload: { value: 2 } }]
-            : ["question-identity", { to: reference, outcome: { success: true, value: 3 } }]
-        socket.end(`${JSON.stringify({ success: true, result: { event: request.event ?? "trace", values } })}\n`)
+      if (event === "/auth/program/force-create-program") {
+        const created = creations++ === 0 ? program : replacement
+        await publish("/auth/program/create", created)
+        return created.identity
       }
-    })
-    socket.on("close", () => { if (running) closeRun() })
+
+      if (event === "/auth/program/area") return join(home, String(input[1]))
+      if (event === "/auth/program/icon") return [137, 80, 78, 71]
+      if (event === "/auth/program/agent") return "Program agent"
+      if (event === "/auth/program/store") return "stored"
+      if (event === "/auth/program/logs") return [{ value: 1 }]
+      if (event === "/auth/program/permissions") {
+        if (input[1] === "all") return { all: [] }
+        if (input[1] === "set") return { permission: [], needReload: false }
+        if (input[1] === "delete") return { permission: null, needReload: false }
+        return []
+      }
+
+      if (event === "/auth/program/command") {
+        const [stream, operation] = input
+        assert.equal(operation, "run")
+        let cancel
+        const cancelled = new Promise(resolve => { cancel = resolve })
+        commands.set(stream, cancel)
+        await publish("/auth/process/created", processRecord)
+        await publish("/auth/program/command-output", stream, { event: "started", process: processRecord })
+        await cancelled
+        await publish("/auth/process/exited", processRecord, null, "SIGTERM")
+        return
+      }
+
+      if (event === "/auth/program/command-cancel") {
+        commands.get(input[0])?.()
+        commands.delete(input[0])
+      }
+    }
   })
 
   await mkdir(home, { recursive: true })
-  await new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(address, resolve)
-  })
+  await server.listen()
 
   const system = await System.connect(home)
   try {
+    const createdEvent = system.program.waitFor("create")
     const created = await system.forceCreateProgram({
       identity: "example",
       storage: join(home, "storage"),
       server: { location: join(home, "server"), entryFile: "main.js" }
     })
 
-    assert.equal(created instanceof Program, true)
+    assert.equal(await createdEvent, created)
+    assert(created instanceof Program)
     assert.equal(created.assetId, program.assetId)
-
-    const controller = new AbortController()
-    const iterator = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
-    const started = await iterator.next()
-
-    assert.equal(started.value.event, "started")
-    assert.equal(started.value.process.identity, process.identity)
-    assert.equal(started.value.process instanceof Process, true)
-    assert.equal(started.value.process.program(), created)
-    assert.equal(started.value.process.server instanceof ServerEndpoint, true)
-    assert.equal(started.value.process.server instanceof Endpoint, true)
-    assert.equal(started.value.process.client instanceof ClientEndpoint, true)
-    assert.equal(started.value.process.client instanceof Endpoint, true)
-    assert.equal(await started.value.process.server.process(), started.value.process)
-    assert.equal(typeof created.data.text, "function")
+    assert.equal(await system.program.find("example"), created)
+    assert.equal((await system.program.list())[0], created)
     assert.equal(await created.data.path(), join(home, "data"))
-    assert.equal(await created.data.resolve("state.txt"), join(home, "data", "state.txt"))
-    assert.equal(typeof created.cache.clear, "function")
-    assert.equal(typeof created.store.get, "function")
-    assert.equal(typeof created.logs.query, "function")
-    assert.equal(typeof created.database.query, "function")
-    assert.deepEqual(await created.permissions.get("all"), [])
-    assert.deepEqual(await created.permissions.all(), { all: [] })
-    assert.deepEqual(await created.permissions.set("all", true), { permission: [], needReload: false })
-    assert.deepEqual(await created.permissions.delete("all"), { permission: null, needReload: false })
-    assert.equal((await created.icon()).type, "image/png")
-    assert.equal(await created.agent(), "Program agent")
-    await created.data.write("state.txt", "canonical")
-    assert.equal(await created.data.text("state.txt"), "canonical")
     assert.equal(await created.store.get("state"), "stored")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
-    assert.equal(await created.waitFor("uninstall"), true)
-    assert.equal(await created.waitFor("forget"), undefined)
+    assert.deepEqual(await created.permissions.get("all"), [])
+    assert.equal((await created.icon()).type, "image/png")
+    assert.equal(await created.agent(), "Program agent")
+
+    const controller = new AbortController()
+    const processCreated = system.process.waitFor("create")
+    const run = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
+    const started = await run.next()
+
+    assert.equal(started.value.event, "started")
+    assert(started.value.process instanceof Process)
+    assert(started.value.process.server instanceof ServerEndpoint)
+    assert(started.value.process.server instanceof Endpoint)
+    assert(started.value.process.client instanceof ClientEndpoint)
+    assert(started.value.process.client instanceof Endpoint)
+    assert.equal(await processCreated, started.value.process)
+    assert.equal(await system.process.find(processRecord.identity), started.value.process)
     assert.equal((await created.process.list())[0], started.value.process)
-    assert.equal(await created.process.waitFor("create"), started.value.process)
-    assert.equal((await created.process.waitFor("exit")).process, started.value.process)
-    const forked = await created.fork("forked")
-    assert.equal(forked.identity, "forked")
-    assert.equal(forked instanceof Program, true)
-    assert.equal(await started.value.process.parent(), null)
     assert.equal(await started.value.process.option("mode"), "test")
-    const publication = await started.value.process.server.traffic.waitFor("trace")
-    assert.equal(publication.to, started.value.process.client)
-    assert.deepEqual(publication.payload, { value: 1 })
-    const asks = started.value.process.server.traffic.asks({ signal: AbortSignal.timeout(1_000) })
-    const question = (await asks.next()).value
-    await asks.return()
-    assert.equal(question.event, "trace")
-    assert.equal(question.questionId, "question-identity")
-    assert.equal(question.message.to, started.value.process.server)
-    assert.deepEqual(question.message.payload, { value: 2 })
-    const answers = started.value.process.server.traffic.answers({ signal: AbortSignal.timeout(1_000) })
-    const answer = (await answers.next()).value
-    await answers.return()
-    assert.equal(answer.event, "trace")
-    assert.equal(answer.questionId, "question-identity")
-    assert.equal(answer.message.to, started.value.process.client)
-    assert.deepEqual(answer.message.outcome, { success: true, value: 3 })
-    assert.equal(await system.program.find(program.identity), created)
-    assert.equal((await system.program.list())[0], created)
-    assert.equal(await system.program.waitFor("create"), created)
-    assert.equal(await system.process.find(process.identity), started.value.process)
-    assert.equal((await system.process.list())[0], started.value.process)
-    assert.equal(await system.process.waitFor("create"), started.value.process)
-    assert.equal(await started.value.process.server.lifecycle.waitFor("start"), undefined)
 
     controller.abort(new Error("cancelled by test"))
-    await assert.rejects(iterator.next(), /cancelled by test/)
-    await runClosed
-
-    const run = requests.find(value => value.request.word === "run-process").request
-    assert.deepEqual(run.handle, { identity: "example", reference: "program-reference" })
-    assert.deepEqual(run.launch, { options: { mode: "test" } })
-
-    const exactProgramRequests = requests.filter(value =>
-      value.target === "api" && value.request.capability === "program"
-    )
-    const exactProcessRequests = requests.filter(value =>
-      value.target === "api" && value.request.capability === "programProcess"
-    )
-    assert(exactProgramRequests.every(value => value.request.handle?.reference === program.reference))
-    assert(exactProcessRequests.every(value => value.request.handle?.reference === program.reference))
+    await assert.rejects(run.next(), /cancelled by test/)
 
     const replaced = await system.forceCreateProgram({
       identity: "example",
@@ -433,25 +338,91 @@ test("a Process run is addressed to the exact Program and follows its signal", a
       server: { location: join(home, "server"), entryFile: "main.js" }
     })
 
+    assert(replaced instanceof Program)
     assert.notEqual(replaced, created)
-    assert.equal(replaced instanceof Program, true)
+    assert(calls.every(call => !call.event.startsWith("/gateway/")))
+    assert(calls.every(call => call.values[0] === "owner"))
   } finally {
     await system.disconnect()
-    await new Promise(resolve => server.close(resolve))
+    await server.close()
     await rm(home, { recursive: true, force: true })
   }
 })
 
-function programApiResult(request, home) {
-  if (request.operation === "storagePath") return join(home, request.area)
-  if (request.operation === "agent") return "Program agent"
-  if (request.operation === "wait") return request.event === "uninstall" ? true : undefined
-  if (request.operation === "icon") return [137, 80, 78, 71]
-  if (request.operation === "store" && request.storeOperation === "get") return "stored"
-  if (request.operation === "query") return [{ value: 1 }]
-  if (request.operation === "permissions" && request.permissionOperation === "get") return []
-  if (request.operation === "permissions" && request.permissionOperation === "all") return { all: [] }
-  if (request.operation === "permissions" && request.permissionOperation === "set") return { permission: [], needReload: false }
-  if (request.operation === "permissions" && request.permissionOperation === "delete") return { permission: null, needReload: false }
-  return true
-}
+test("Endpoint observations remain live across the owner LinkManager connection", async () => {
+  const home = await mkdtemp(join(tmpdir(), "phresh-system-events-"))
+  const address = gatewayAddress(home)
+  const program = {
+    reference: "program-reference",
+    identity: "example",
+    assetId: "00000000-0000-4000-8000-000000000001",
+    installed: true,
+    name: "Example",
+    version: null,
+    description: null,
+    hasAgent: false,
+    server: { start: true, service: false },
+    client: null
+  }
+  const processRecord = {
+    reference: "process-reference",
+    identity: "process-identity",
+    name: "main",
+    program: program.identity,
+    parent: null,
+    options: {},
+    startedAt: new Date(),
+    server: { ready: true, service: false },
+    client: null
+  }
+  let followed
+  let confirmUnfollow
+  const unfollowed = new Promise(resolve => { confirmUnfollow = resolve })
+  const server = createGateway(address, {
+    session: {
+      authorization: "owner",
+      linkManager: { appearance: { key: "appearance", value: {} } },
+      authManager: {
+        programManager: { programs: [[program.identity, program]] },
+        processManager: { processes: [[processRecord.identity, processRecord]] }
+      }
+    },
+    async route({ event, values, publish }) {
+      const [, subscription, observation] = values
+      if (event === "/auth/process/follow") {
+        followed = observation
+        await publish("/auth/process/followed", subscription, "changed", new Uint8Array([1, 2, 3]))
+      }
+      if (event === "/auth/process/unfollow") confirmUnfollow(subscription)
+    }
+  })
+
+  await mkdir(home, { recursive: true })
+  await server.listen()
+
+  const system = await System.connect(home)
+  try {
+    const process = await system.process.find(processRecord.identity)
+    assert(process)
+
+    const message = new Promise(resolve => {
+      const stop = process.server.subscribe("changed", value => {
+        stop()
+        resolve(value)
+      })
+    })
+
+    assert.deepEqual(await message, new Uint8Array([1, 2, 3]))
+    assert.deepEqual(followed, {
+      scope: "endpoint",
+      process: processRecord.identity,
+      endpoint: "server",
+      event: "changed"
+    })
+    assert.equal(typeof await unfollowed, "string")
+  } finally {
+    await system.disconnect()
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})

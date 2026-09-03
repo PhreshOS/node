@@ -42,7 +42,6 @@ import {
   type WindowEvents,
   type WindowGeometry
 } from "@phreshos/core"
-import type { Socket } from "node:net"
 import { homedir } from "node:os"
 import { gatewayAddress } from "./address.js"
 import Events from "./events.js"
@@ -51,7 +50,12 @@ import { resolveHome } from "./home.js"
 import { filesystemStorage, nativeStorage } from "./storage.js"
 import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
-import { openConnection, request, stream, type TransportEvent } from "./transport.js"
+import SystemRepresentation, {
+  type ProcessState,
+  type ProgramAddress,
+  type ProgramState
+} from "./representation.js"
+import { GatewayConnection, openConnection } from "./transport.js"
 import Uploads from "./uploads.js"
 import shell from "./shell.js"
 
@@ -68,22 +72,16 @@ type ServiceHandle<Endpoint extends ServiceEndpoint, EventsMap extends object, F
   ? ServerService<EventsMap, Fallback>
   : ClientService<EventsMap, Fallback>
 
-interface SystemTransport {
-  control(request: object, signal?: AbortSignal): Promise<unknown>
-  api(request: object, signal?: AbortSignal): Promise<unknown>
-  stream(target: "program", request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
-}
-
 interface SystemState {
-  readonly address: string
-  readonly connection: Socket
+  readonly connection: GatewayConnection
   readonly handles: HandleRegistry
   readonly lifetime: AbortController
-  readonly transport: SystemTransport
+  readonly representation: SystemRepresentation
   closed: boolean
 }
 
 const systems = new WeakMap<System, SystemState>()
+const processSnapshots = new WeakMap<object, ProcessState>()
 
 const ProgramBase = CoreProgram as unknown as new () => object
 const ProcessBase = CoreProcess as unknown as new () => object
@@ -107,43 +105,38 @@ export class System implements CoreSystem {
     yield* shell(command, { ...options, signal: connectedSignal(this, options.signal) })
   }
 
-  private constructor(address: string, connection: Socket) {
+  private constructor(connection: GatewayConnection) {
     const lifetime = new AbortController()
     const handles = new HandleRegistry()
-    const transport: SystemTransport = {
-      control: (value, signal) => request(address, "system", value, connectedSignal(this, signal)),
-      api: (value, signal) => request(address, "api", value, connectedSignal(this, signal)),
-      stream: (target, value, signal) => stream(address, target, value, connectedSignal(this, signal))
-    }
+    const representation = new SystemRepresentation(connection)
 
-    systems.set(this, { address, connection, handles, lifetime, transport, closed: false })
-    connection.once("close", () => closeSystem(this, new Error("This System connection is closed")))
+    systems.set(this, { connection, handles, lifetime, representation, closed: false })
+    connection.onDisconnect(() => void closeSystem(this, new Error("This System connection is closed")))
     this.storage = nativeStorage(homedir(), "the native filesystem", () => connectedSignal(this))
-    this.appearance = new SystemAppearance(transport)
+    this.appearance = new SystemAppearance(this)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
-    this.uploads = new Uploads(value => transport.api(value), () => connectedSignal(this))
+    this.uploads = new Uploads(value => uploadRequest(this, value), () => connectedSignal(this))
+    representation.activate()
   }
 
   /** Connect to the System selected by argument, environment, or owner default. */
   public static async connect(home?: string) {
     const resolved = resolveHome(home)
     const address = gatewayAddress(resolved)
-    return new System(address, await openConnection(address))
+    return new System(await openConnection(address))
   }
 
   /** Atomically replace one runtime Program without touching its installed form. */
   public async forceCreateProgram(source: ProgramDefinition | string): Promise<Program> {
     requireConnected(this)
-    for await (const event of transport(this).stream("program", { word: "force-create", program: source })) {
-      if (event.event === "created") return programHandle(this, required(event.program as ProgramSnapshot | undefined))
-    }
-    throw new Error("The System did not confirm the created Program")
+    const identity = await representation(this).call<string>("/program/force-create-program", source, "")
+    return programHandle(this, required(representation(this).programs.get(identity), identity))
   }
 
   /** Close this owner connection and abort every attached operation it owns. */
   public async disconnect() {
-    closeSystem(this, new Error("This System connection is closed"))
+    await closeSystem(this, new Error("This System connection is closed"))
   }
 
   public service<Endpoint extends ServiceEndpoint>(key: ServiceAddress<Endpoint>): ServiceHandle<Endpoint, {}>
@@ -174,11 +167,12 @@ function systemState(system: System) {
 
 function closeSystem(system: System, reason: Error) {
   const state = systemState(system)
-  if (state.closed) return
+  if (state.closed) return Promise.resolve()
   state.closed = true
   state.lifetime.abort(reason)
-  state.connection.destroy()
+  state.representation.close()
   state.handles.clear()
+  return state.connection.disconnect()
 }
 
 function requireConnected(system: System) {
@@ -191,84 +185,63 @@ function connectedSignal(system: System, signal?: AbortSignal) {
   return signal ? AbortSignal.any([signal, lifetime]) : lifetime
 }
 
-function transport(system: System) {
+function representation(system: System) {
   requireConnected(system)
-  return systemState(system).transport
+  return systemState(system).representation
 }
 
-function programHandle(system: System, snapshot: ProgramSnapshot) {
+function programHandle(system: System, snapshot: ProgramState) {
   const handle = systemState(system).handles.obtain(`program:${snapshot.reference}`, () => new ProgramHandle(system, snapshot))
   handle.update(snapshot)
   return handle
 }
 
-function processHandle(system: System, snapshot: ProcessSnapshot) {
+function processHandle(system: System, snapshot: ProcessState) {
   return systemState(system).handles.obtain(`process:${snapshot.reference}`, () => new ProcessHandle(system, snapshot))
 }
 
 class SystemAppearance extends Events<{ change: Appearance }> {
-  public constructor(private readonly transport: SystemTransport) {
-    super(["change"], (_event, signal) => transport.api({ capability: "appearance", operation: "wait" }, signal))
+  public constructor(private readonly system: System) {
+    super(["change"], (_event, subscriber) => representation(system).on("appearance", subscriber))
   }
 
   public async snapshot() {
-    return await this.transport.api({ capability: "appearance", operation: "snapshot" }) as Appearance
+    return representation(this.system).appearance
   }
 
   public async update(appearance: Appearance) {
-    await this.transport.api({ capability: "appearance", operation: "update", value: appearance })
+    await representation(this.system).call("/appearance/update", appearance)
   }
 }
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
   public constructor(private readonly system: System) {
-    super(["create", "forget", "install", "uninstall"], (event, signal, timeout) => (
-      transport(system).control({ capability: "program", operation: "wait", input: { event, timeout } }, signal)
-        .then(value => this.event(value))
-    ))
+    super(["create", "forget", "install", "uninstall"], (event, subscriber) => {
+      if (event === null) throw new Error("System Program events are named")
+      return representation(system).on(`program:${event}`, (...values) => subscriber(this.event(event, values)))
+    })
   }
 
   public async list(onlyInstalled = false) {
-    const programs: ProgramHandle[] = []
-    let offset = 0
-
-    while (true) {
-      const page = await transport(this.system).control({
-        capability: "program",
-        operation: "list",
-        input: { installedOnly: onlyInstalled, limit: 100, offset }
-      }) as Page<ProgramSnapshot>
-
-      programs.push(...page.data.map(snapshot => programHandle(this.system, snapshot)))
-      offset += page.data.length
-      if (!page.truncated || !page.data.length) return programs
-    }
+    return [...representation(this.system).programs.values()]
+      .filter(program => !onlyInstalled || program.installed)
+      .sort((left, right) => left.identity.localeCompare(right.identity))
+      .map(program => programHandle(this.system, program))
   }
 
   public async find(identity: string) {
-    try {
-      const snapshot = await transport(this.system).control({ capability: "program", operation: "inspect", input: { program: identity } }) as ProgramSnapshot
-      return programHandle(this.system, snapshot)
-    } catch (error) {
-      if (unknown(error, "Program")) return null
-      throw error
-    }
+    const program = representation(this.system).programs.get(identity)
+    return program ? programHandle(this.system, program) : null
   }
 
   public async create(source: ProgramDefinition | string) {
-    for await (const event of transport(this.system).stream("program", { word: "create", program: source })) {
-      if (event.event === "created") return programHandle(this.system, required(event.program as ProgramSnapshot | undefined))
-    }
-    throw new Error("The System did not confirm the created Program")
+    const identity = await representation(this.system).call<string>("/program/create-program", source)
+    return programHandle(this.system, required(representation(this.system).programs.get(identity), identity))
   }
 
-  private async event(value: unknown) {
-    const waited = value as { event?: string, payload?: unknown }
-    if (waited.event === "uninstall") {
-      const payload = waited.payload as { program?: ProgramSnapshot, everything?: boolean }
-      return { program: programHandle(this.system, required(payload.program)), everything: payload.everything === true }
-    }
-    return programHandle(this.system, required(waited.payload as ProgramSnapshot | undefined))
+  private event(event: string, values: unknown[]) {
+    const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
+    return event === "uninstall" ? { program, everything: values[1] === true } : program
   }
 }
 
@@ -285,26 +258,28 @@ class ProgramHandle extends ProgramBase {
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
   public readonly permissions
-  private snapshot: ProgramSnapshot
+  private snapshot: ProgramState
 
-  public constructor(private readonly system: System, snapshot: ProgramSnapshot) {
+  public constructor(private readonly system: System, snapshot: ProgramState) {
     super()
     this.snapshot = snapshot
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, signal, timeout) => transport(system).api({
-      capability: "program", operation: "wait", handle: address, event, timeout
-    }, signal)))
-    const request = (value: object) => transport(system).api(value)
+    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, subscriber) => {
+      if (event === null) throw new Error("Program events are named")
+      return representation(system).on(`program:${this.reference}:${event}`, (...values) => subscriber(values[0]))
+    }))
+    representation(system).on(`program:${this.reference}:change`, value => this.update(value as ProgramState))
+    const call = <Result = unknown>(event: string, ...values: unknown[]) => representation(system).call<Result>(event, ...values)
     this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`, () => connectedSignal(system))
     this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`, () => connectedSignal(system))
-    this.store = programStore(request, address)
-    this.logs = programSql(request, address, "logs")
-    this.database = programSql(request, address, "database")
+    this.store = programStore(call, address)
+    this.logs = programSql(call, address, "logs")
+    this.database = programSql(call, address, "database")
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
-    this.permissions = programPermissions(request, address)
+    this.permissions = programPermissions(call, address)
   }
 
   public get name() { return this.snapshot.name }
@@ -331,42 +306,37 @@ class ProgramHandle extends ProgramBase {
     }) : null
   }
 
-  public update(snapshot: ProgramSnapshot) {
+  public update(snapshot: ProgramState) {
     if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
     this.snapshot = snapshot
   }
 
   public async icon(size: ProgramIconSize = "medium") {
-    const value = await transport(this.system).api({ capability: "program", operation: "icon", handle: this.address(), size })
+    const value = await representation(this.system).call<unknown>("/program/icon", this.address(), size)
     if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid Program icon")
     return new Blob([Uint8Array.from(value)], { type: "image/png" })
   }
 
   public async agent() {
     if (!this.hasAgent) return null
-    const value = await transport(this.system).api({ capability: "program", operation: "agent", handle: this.address() })
+    const value = await representation(this.system).call<unknown>("/program/agent", this.address())
     return typeof value === "string" ? value : null
   }
 
   public async installed() {
-    for await (const event of transport(this.system).stream("program", { word: "installed", handle: this.address() })) {
-      if (event.event === "installedState") return event.installed === true
-    }
-    throw new Error("The System returned no Program installation state")
+    return this.snapshot.installed
   }
 
-  public install() { return command(this.system, { word: "install-existing", handle: this.address() }) }
-  public uninstall(everything = false) { return command(this.system, { word: "uninstall-existing", handle: this.address(), everything }) }
+  public install() { return command(this.system, "install", this.address()) }
+  public uninstall(everything = false) { return command(this.system, "uninstall", this.address(), everything) }
 
   public async fork(identity: string) {
-    for await (const event of transport(this.system).stream("program", { word: "fork", handle: this.address(), identity })) {
-      if (event.event === "created") return programHandle(this.system, required(event.program as ProgramSnapshot | undefined))
-    }
-    throw new Error("The System did not confirm the forked Program")
+    const created = await representation(this.system).call<string>("/program/fork-program", this.address(), identity)
+    return programHandle(this.system, required(representation(this.system).programs.get(created), created))
   }
 
   public async forget() {
-    for await (const _event of transport(this.system).stream("program", { word: "forget", handle: this.address() })) { /* consume completion */ }
+    await representation(this.system).call("/program/forget-program", this.address(), "")
   }
 
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
@@ -376,12 +346,7 @@ class ProgramStartup {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
 
   public async get() {
-    for await (const event of transport(this.system).stream("program", {
-      word: "startup", handle: this.program.address(), operation: "get"
-    })) {
-      if (event.event === "startup") return event.launch as Launch | null
-    }
-    throw new Error("The System returned no Program startup state")
+    return await representation(this.system).call<Launch | null>("/program/startup", this.program.address(), "get")
   }
 
   public async enable(launch: Launch = {}) {
@@ -393,26 +358,24 @@ class ProgramStartup {
   }
 
   private async change(operation: "enable" | "disable", launch?: Launch) {
-    for await (const event of transport(this.system).stream("program", {
-      word: "startup", handle: this.program.address(), operation, launch
-    })) {
-      if (event.event === "startup") return
-    }
-    throw new Error("The System did not confirm the Program startup change")
+    await representation(this.system).call("/program/startup", this.program.address(), operation, launch)
   }
 }
 
 class ProgramProcesses extends Events<ProgramProcessEvents> {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {
-    super(["create", "exit"], (event, signal, timeout) => transport(system).api({
-      capability: "programProcess", operation: "wait", handle: program.address(), event, timeout
-    }, signal).then(value => programProcessEvent(system, event, value)))
+    super(["create", "exit"], (event, subscriber) => {
+      if (event === null) throw new Error("Program Process events are named")
+      return representation(system).on(`program:${program.identity}:process:${event}`, (...values) => (
+        subscriber(programProcessEvent(system, event, values))
+      ))
+    })
   }
 
   public async list() {
-    const value = await transport(this.system).api({ capability: "programProcess", operation: "list", handle: this.program.address() })
-    if (!Array.isArray(value)) throw new Error("The System returned an invalid Program Process list")
-    return value.map(snapshot => processHandle(this.system, snapshot as ProcessSnapshot))
+    return [...representation(this.system).processes.values()]
+      .filter(process => process.program === this.program.identity)
+      .map(process => processHandle(this.system, process))
   }
   public async first() { return (await this.list()).sort(chronological)[0] ?? null }
   public async last() { return (await this.list()).sort(chronological).at(-1) ?? null }
@@ -427,13 +390,11 @@ class ProgramProcesses extends Events<ProgramProcessEvents> {
   public async *run(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
     let process: ProcessHandle | null = null
 
-    for await (const event of transport(this.system).stream("program", {
-      word: "run-process",
-      handle: this.program.address(),
-      launch
-    }, options.signal)) {
+    for await (const event of representation(this.system).command("run", this.program.address(), launch, options.signal)) {
       if (event.event === "started") {
-        process = processHandle(this.system, required(event.process as ProcessSnapshot | undefined))
+        const identity = (event.process as { identity?: unknown } | undefined)?.identity
+        if (typeof identity !== "string") throw new Error("The System returned an invalid started Process")
+        process = processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
         yield Object.freeze({ event: "started", process })
       } else if (event.event === "output") {
         if ((event.stream !== "stdout" && event.stream !== "stderr") || typeof event.text !== "string") {
@@ -465,36 +426,29 @@ class ProgramProcesses extends Events<ProgramProcessEvents> {
   public findOrCreate(launch: Launch & { name: string }) { return this.createExact("find-or-create-process", launch) }
 
   public async exitAll() {
-    const processes = await this.list()
-    await Promise.all(processes.map(process => process.exit()))
-    return processes.map(process => process.identity)
+    return await representation(this.system).call<string[]>("/process/exit-all", this.program.identity, "")
   }
 
   private async createExact(word: "create-process" | "find-or-create-process", launch: Launch) {
-    for await (const event of transport(this.system).stream("program", { word, handle: this.program.address(), launch })) {
-      if (event.event === "createdProcess") return processHandle(this.system, required(event.process as ProcessSnapshot | undefined))
-    }
-    throw new Error("The System did not confirm the created Process")
+    const route = word === "create-process" ? "/program/create-process" : "/program/find-or-create-process"
+    const identity = await representation(this.system).call<string>(route, this.program.address(), launch, null)
+    return processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
   }
 }
 
 class ProcessRegistry extends Events<SystemProcessEvents> {
   public constructor(private readonly system: System) {
-    super(["create", "exit"], (event, signal, timeout) => transport(system).control({
-      capability: "process", operation: "wait", input: { event, timeout }
-    }, signal).then(value => processEvent(system, value)))
+    super(["create", "exit"], (event, subscriber) => {
+      if (event === null) throw new Error("System Process events are named")
+      return representation(system).on(`process:${event}`, (...values) => subscriber(processEvent(system, event, values)))
+    })
   }
 
   public list() { return listProcesses(this.system) }
 
   public async find(identity: string) {
-    try {
-      const snapshot = await transport(this.system).control({ capability: "process", operation: "inspect", input: { process: identity } }) as ProcessSnapshot
-      return processHandle(this.system, snapshot)
-    } catch (error) {
-      if (unknown(error, "Process")) return null
-      throw error
-    }
+    const process = representation(this.system).processes.get(identity)
+    return process ? processHandle(this.system, process) : null
   }
 }
 
@@ -507,11 +461,12 @@ class ProcessHandle extends ProcessBase {
   public readonly server: ServerEndpoint
   public readonly client: ClientEndpoint
 
-  public constructor(private readonly system: System, private readonly snapshot: ProcessSnapshot) {
+  public constructor(private readonly system: System, snapshot: ProcessState) {
     super()
-    bindEvents(this, new Events<ProcessEvents>(["exit"], (event, signal, timeout) => transport(system).control({
-      capability: "process", operation: "wait", input: { process: snapshot.identity, event, timeout }
-    }, signal).then(exactProcessEvent)))
+    processSnapshots.set(this, snapshot)
+    bindEvents(this, new Events<ProcessEvents>(["exit"], (_event, subscriber) => (
+      representation(system).on(`process:${snapshot.reference}:exit`, value => subscriber(value))
+    )))
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
@@ -519,20 +474,24 @@ class ProcessHandle extends ProcessBase {
     this.client = new ClientEndpointHandle(system, this)
   }
 
-  public program() { return programHandle(this.system, required(this.snapshot.programSnapshot, this.snapshot.program)) }
+  public program() {
+    const snapshot = processState(this.system, this)
+    return programHandle(this.system, required(representation(this.system).programs.get(snapshot.program), snapshot.program))
+  }
 
   public async parent() {
     if (!await this.exists()) throw new Error(`Process "${this.identity}" no longer exists`)
-    if (this.snapshot.parent === null) return null
-    const parent = await this.system.process.find(this.snapshot.parent)
+    const snapshot = processState(this.system, this)
+    if (snapshot.parent === null) return null
+    const parent = await this.system.process.find(snapshot.parent.identity)
     if (!parent) throw new Error("The parent Process no longer exists")
     return parent
   }
 
-  public async option(name: string) { return this.snapshot.options[name] }
+  public async option(name: string) { return processState(this.system, this).options[name] }
 
   public async exit() {
-    await transport(this.system).control({ capability: "process", operation: "exit", input: { process: this.identity } })
+    await representation(this.system).call("/process/exit", this.identity)
   }
 
   public async exited() { return await this.system.process.find(this.identity) === null }
@@ -548,54 +507,40 @@ class EndpointOperations extends Events<{}, unknown> {
     public readonly owner: ProcessHandle,
     public readonly endpoint: "server" | "client"
   ) {
-    super([], (event, signal, timeout) => event === null
-      ? transport(system).api({ capability: "endpoint", operation: "wait", process: owner.identity, endpoint, event, timeout }, signal)
-      : transport(system).control({
-        capability: "endpoint", operation: "wait", input: { process: owner.identity, endpoint, event, timeout }
-      }, signal).then(value => (value as { payload?: unknown }).payload))
-    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, signal, timeout) => {
-      return waitEndpointLifecycle(system, owner, endpoint, event, signal, timeout)
-    })
+    super([], (event, subscriber, impossible) => representation(system).follow({
+      scope: "endpoint",
+      process: owner.identity,
+      endpoint,
+      event
+    }, (_received, payload) => subscriber(payload), impossible))
+    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, subscriber, impossible) => (
+      endpointLifecycle(system, owner, endpoint, event, subscriber, impossible)
+    ))
   }
 
   public process() { return Promise.resolve(this.owner) }
 
   public async exists() {
-    const value = await this.inspect()
-    return value.running
+    return endpointState(this.system, this.owner, this.endpoint) !== null
   }
 
   public async start(launch: ServerLaunch | ClientLaunch = {}) { await this.operation("start", launch) }
   public async stop() { await this.operation("stop") }
 
   public async waitReady(timeout?: number) {
-    await transport(this.system).control({ capability: "endpoint", operation: "waitReady", input: {
-      process: this.owner.identity, endpoint: this.endpoint, timeout
-    } })
+    await waitEndpointReady(this.system, this.owner, this.endpoint, timeout)
   }
 
   public async isService() {
-    return await transport(this.system).api({
-      capability: "endpoint", operation: "isService", process: this.owner.identity, endpoint: this.endpoint
-    }) as boolean
+    return endpointState(this.system, this.owner, this.endpoint)?.service === true
   }
 
   public publish(event: string, payload?: unknown) {
-    void transport(this.system).control({ capability: "endpoint", operation: "publish", input: {
-      process: this.owner.identity, endpoint: this.endpoint, event, payload
-    } })
-  }
-
-  private inspect() {
-    return transport(this.system).control({ capability: "endpoint", operation: "inspect", input: {
-      process: this.owner.identity, endpoint: this.endpoint
-    } }) as Promise<EndpointSnapshot>
+    void representation(this.system).call("/process/endpoint/publish", this.owner.identity, this.endpoint, event, payload)
   }
 
   private async operation(operation: "start" | "stop", launch?: ServerLaunch | ClientLaunch) {
-    await transport(this.system).control({ capability: "endpoint", operation, input: {
-      process: this.owner.identity, endpoint: this.endpoint, ...(launch ? { launch } : {})
-    } })
+    await representation(this.system).call(`/process/endpoint/${operation}`, this.owner.identity, this.endpoint, launch)
   }
 }
 
@@ -611,7 +556,7 @@ class ServerEndpointHandle extends ServerEndpointBase {
     super()
     this.base = new EndpointOperations(system, owner, "server")
     this.traffic = new ServerTrafficHandle(
-      (value, signal) => transport(system).api(value, signal),
+      representation(system),
       owner.identity,
       "server",
       value => endpointFromReference(system, value)
@@ -629,15 +574,15 @@ class ServerEndpointHandle extends ServerEndpointBase {
   public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
 
   public async ask<Answer = unknown>(event: string, payload?: unknown) {
-    return await transport(this.system).control({ capability: "endpoint", operation: "ask", input: {
-      process: this.owner.identity, endpoint: "server", event, payload
-    } }) as Answer
+    return await this.askWithin<Answer>(event, payload, 10_000)
   }
 
   public timeout(milliseconds: number) {
-    return { ask: <Answer = unknown>(event: string, payload?: unknown) => transport(this.system).control({
-      capability: "endpoint", operation: "ask", input: { process: this.owner.identity, endpoint: "server", event, payload, timeout: milliseconds }
-    }) as Promise<Answer> }
+    return { ask: <Answer = unknown>(event: string, payload?: unknown) => this.askWithin<Answer>(event, payload, milliseconds) }
+  }
+
+  private askWithin<Answer>(event: string, payload: unknown, timeout: number) {
+    return representation(this.system).call<Answer>("/process/endpoint/ask", this.owner.identity, event, payload, timeout)
   }
 
 }
@@ -655,7 +600,7 @@ class ClientEndpointHandle extends ClientEndpointBase {
     super()
     this.base = new EndpointOperations(system, owner, "client")
     this.traffic = new EndpointTrafficHandle(
-      (value, signal) => transport(system).api(value, signal),
+      representation(system),
       owner.identity,
       "client",
       value => endpointFromReference(system, value)
@@ -677,31 +622,34 @@ class ClientEndpointHandle extends ClientEndpointBase {
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "geometry", "minimize", "changeTitle", "front"], (event, signal, timeout) => transport(system).control({
-      capability: "window", operation: "wait", input: { process: process.identity, event, timeout }
-    }, signal).then(value => (value as { payload?: unknown }).payload))
+    super(["move", "resize", "geometry", "minimize", "changeTitle", "front"], (event, subscriber) => {
+      if (event === null) throw new Error("Window events are named")
+      return representation(system).on(`window:${process.identity}:${event}`, subscriber)
+    })
   }
 
   public async title() { return (await this.snapshot()).title }
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
   public async minimized() { return (await this.snapshot()).minimized }
-  public async front() { return (await this.snapshot()).front }
+  public async front() { return frontWindow(this.system, this.process) }
   public async layer() { return (await this.snapshot()).layer }
   public async location() { return (await this.snapshot()).location }
-  public async move(position: Position) { await this.change("move", { position }) }
-  public async resize(size: Size) { await this.change("resize", { size }) }
-  public async setGeometry(geometry: WindowGeometry) { await this.change("setGeometry", geometry) }
-  public async minimize(minimized = true) { await this.change("minimize", { minimized }) }
-  public async changeTitle(title: string) { await this.change("changeTitle", { title }) }
-  public async raise() { await this.change("raise", {}) }
+  public async move(position: Position) { await this.change("move", position) }
+  public async resize(size: Size) { await this.change("resize", size) }
+  public async setGeometry(geometry: WindowGeometry) { await this.change("geometry", geometry) }
+  public async minimize(minimized = true) { await this.change("minimize", minimized) }
+  public async changeTitle(title: string) { await this.change("change-title", title) }
+  public async raise() { await this.change("raise") }
 
   private snapshot() {
-    return transport(this.system).control({ capability: "window", operation: "inspect", input: { process: this.process.identity } }) as Promise<WindowSnapshot>
+    const window = processState(this.system, this.process).client?.window
+    if (!window) throw new Error(`Process "${this.process.identity}" has no live Client Endpoint`)
+    return Promise.resolve(window)
   }
 
-  private async change(operation: string, input: object) {
-    await transport(this.system).control({ capability: "window", operation, input: { process: this.process.identity, ...input } })
+  private async change(operation: string, input?: unknown) {
+    await representation(this.system).call(`/process/${operation}`, this.process.identity, input)
   }
 }
 
@@ -709,19 +657,19 @@ class ServiceBase {
   public readonly lifecycle: EndpointLifecycle
 
   public constructor(protected readonly system: System, protected readonly key: ServiceKey) {
-    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, signal, timeout) => transport(system).api({
-      capability: "service", operation: "wait", scope: "lifecycle", key, event, timeout
-    }, signal))
+    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, subscriber, impossible) => representation(system).follow({
+      scope: "service", key, kind: "lifecycle", event
+    }, (_received, payload) => subscriber(payload), impossible))
   }
 
-  public async exists() { return await transport(this.system).api({ capability: "service", operation: "exists", key: this.key }) as boolean }
+  public async exists() { return serviceState(this.system, this.key) !== null }
 
   public async waitReady(timeout?: number) {
-    await transport(this.system).api({ capability: "service", operation: "waitReady", key: this.key, timeout })
+    await representation(this.system).call("/process/service/wait-ready", this.key, timeout)
   }
 
   public publish(event: string, payload?: unknown) {
-    void transport(this.system).api({ capability: "service", operation: "publish", key: this.key, event, payload })
+    void representation(this.system).call("/process/service/publish", this.key, event, payload)
   }
 }
 
@@ -738,21 +686,21 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, Fallback>([], (event, signal, timeout) => transport(system).api({
-      capability: "service", operation: "wait", scope: "events", key, event, timeout
-    }, signal)))
+    bindEvents(this, new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
+      scope: "service", key, kind: "events", event
+    }, (_received, payload) => subscriber(payload), impossible)))
   }
 
   public override exists() { return this.base.exists() }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
-    return await transport(this.system).api({ capability: "service", operation: "ask", key: this.key, event, payload }) as Answer
+    return await representation(this.system).call<Answer>("/process/service/ask", this.key, event, payload, 10_000)
   }
   public override timeout(milliseconds: number) {
-    return { ask: <Answer = unknown>(event: string, payload?: unknown) => transport(this.system).api({
-      capability: "service", operation: "ask", key: this.key, event, payload, timeout: milliseconds
-    }) as Promise<Answer> }
+    return { ask: <Answer = unknown>(event: string, payload?: unknown) => representation(this.system).call<Answer>(
+      "/process/service/ask", this.key, event, payload, milliseconds
+    ) }
   }
 }
 
@@ -769,9 +717,9 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, Fallback>([], (event, signal, timeout) => transport(system).api({
-      capability: "service", operation: "wait", scope: "events", key, event, timeout
-    }, signal)))
+    bindEvents(this, new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
+      scope: "service", key, kind: "events", event
+    }, (_received, payload) => subscriber(payload), impossible)))
   }
 
   public override exists() { return this.base.exists() }
@@ -780,18 +728,13 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 }
 
 async function listProcesses(system: System) {
-  const processes: ProcessHandle[] = []
-  let offset = 0
-  while (true) {
-    const page = await transport(system).control({ capability: "process", operation: "list", input: { limit: 100, offset } }) as Page<ProcessSnapshot>
-    processes.push(...page.data.map(snapshot => processHandle(system, snapshot)))
-    offset += page.data.length
-    if (!page.truncated || !page.data.length) return processes
-  }
+  return [...representation(system).processes.values()]
+    .sort((left, right) => right.startedAt.getTime() - left.startedAt.getTime())
+    .map(process => processHandle(system, process))
 }
 
-async function* command(system: System, request: object): AsyncGenerator<ProgramCommandChunk, void, void> {
-  for await (const event of transport(system).stream("program", request)) {
+async function* command(system: System, operation: "install" | "uninstall", subject: ProgramAddress, value?: unknown): AsyncGenerator<ProgramCommandChunk, void, void> {
+  for await (const event of representation(system).command(operation, subject, value)) {
     if (event.event === "output") yield {
       stream: event.stream === "stderr" ? "stderr" : "stdout",
       text: String(event.text ?? "")
@@ -799,55 +742,29 @@ async function* command(system: System, request: object): AsyncGenerator<Program
   }
 }
 
-async function waitEndpointLifecycle(
+function endpointLifecycle(
   system: System,
   owner: ProcessHandle,
   endpoint: "server" | "client",
   event: string | null,
-  signal: AbortSignal,
-  timeout = 10_000
+  subscriber: (message: unknown) => unknown,
+  impossible?: (error: Error) => void
 ) {
   if (event !== "start" && event !== "stop") throw new Error(`An Endpoint lifecycle has no "${event}" event`)
-  await transport(system).control({
-    capability: "endpoint",
-    operation: "waitLifecycle",
-    input: { process: owner.identity, endpoint, event, timeout }
-  }, signal)
+  const model = representation(system)
+  const stopEvent = model.on(`endpoint:${processReference(owner)}:${endpoint}:${event}`, () => subscriber(undefined))
+  const stopExit = model.on(`process:${processReference(owner)}:exit`, () => impossible?.(new Error(`Process "${owner.identity}" exited`)))
+  return () => { stopEvent(); stopExit() }
 }
 
-function processEvent(system: System, value: unknown): unknown {
-  const waited = value as { event?: string, payload?: unknown }
-  const payload = waited.payload as Record<string, unknown> | undefined
-  if (waited.event === "exit" && payload) return {
-    process: processHandle(system, required(payload.processSnapshot as ProcessSnapshot | undefined, String(payload.process ?? ""))),
-    status: payload.status,
-    code: payload.code,
-    signal: payload.signal
-  }
-  if (payload && typeof payload.identity === "string") return processHandle(system, payload as unknown as ProcessSnapshot)
-  return payload
+function processEvent(system: System, event: string, values: unknown[]) {
+  const process = processHandle(system, required(values[0] as ProcessState | undefined))
+  return event === "exit" ? { process, ...(values[1] as object) } : process
 }
 
-function programProcessEvent(system: System, event: string | null, value: unknown) {
-  if (event === "create") return processHandle(system, value as ProcessSnapshot)
-
-  const exit = value as Record<string, unknown>
-  return {
-    process: processHandle(system, required(exit.process as ProcessSnapshot | undefined)),
-    status: exit.status,
-    code: exit.code,
-    signal: exit.signal
-  }
-}
-
-function exactProcessEvent(value: unknown) {
-  const payload = (value as { payload?: unknown }).payload as Record<string, unknown> | undefined
-  if (!payload) return payload
-  return {
-    status: payload.status,
-    code: payload.code,
-    signal: payload.signal
-  }
+function programProcessEvent(system: System, event: string | null, values: unknown[]) {
+  const process = processHandle(system, required(values[0] as ProcessState | undefined))
+  return event === "exit" ? { process, ...(values[1] as object) } : process
 }
 
 function bindEvents<Definitions extends object, Fallback>(target: object, events: Events<Definitions, Fallback>) {
@@ -864,86 +781,94 @@ function eventsOf<Definitions extends object, Fallback>(events: Events<Definitio
 
 function chronological(left: Process, right: Process) { return left.startedAt.getTime() - right.startedAt.getTime() }
 async function programStoragePath(system: System, handle: ReturnType<ProgramHandle["address"]>, area: "data" | "cache") {
-  const value = await transport(system).api({ capability: "program", operation: "storagePath", handle, area })
+  const value = await representation(system).call<unknown>("/program/area", handle, area, "path", [])
   if (typeof value !== "string") throw new Error("The System returned an invalid Program storage path")
   return value
 }
 
 function endpointFromReference(system: System, value: unknown) {
   const reference = value as EndpointReference | null
-  if (!reference || (reference.kind !== "server" && reference.kind !== "client")) throw new Error("The System returned an invalid Endpoint reference")
-  const owner = processHandle(system, snapshotFromReference(reference.process))
+  if (!reference || (reference.kind !== "server" && reference.kind !== "client") || typeof reference.process?.identity !== "string") {
+    throw new Error("The System returned an invalid Endpoint reference")
+  }
+  const owner = processHandle(system, required(representation(system).processes.get(reference.process.identity), reference.process.identity))
   return reference.kind === "server" ? owner.server : owner.client
 }
 
-function snapshotFromReference(reference: ProcessReference): ProcessSnapshot {
-  const owner = reference.program
-  if (!owner || typeof owner.reference !== "string" || typeof owner.identity !== "string") throw new Error("The System returned an invalid Process reference")
-  return {
-    reference: reference.reference,
-    identity: reference.identity,
-    name: reference.name,
-    program: owner.identity,
-    programSnapshot: owner,
-    parent: null,
-    options: reference.options,
-    startedAt: reference.startedAt,
-    server: { declared: owner.server !== null, running: reference.server !== null, service: reference.server?.service === true },
-    client: { declared: owner.client !== null, running: reference.client !== null, service: reference.client?.service === true }
-  }
+function processState(system: System, process: ProcessHandle) {
+  const original = required(processSnapshots.get(process))
+  const current = representation(system).processes.get(process.identity)
+  if (!current || current.reference !== original.reference) throw new Error(`Process "${process.identity}" no longer exists`)
+  return current
 }
-function unknown(error: unknown, entity: string) { return error instanceof Error && error.message.startsWith(`Unknown ${entity}`) }
+
+function processReference(process: ProcessHandle) { return required(processSnapshots.get(process)).reference }
+
+function endpointState(system: System, process: ProcessHandle, endpoint: "server" | "client") {
+  const current = representation(system).processes.get(process.identity)
+  const original = required(processSnapshots.get(process))
+  return current?.reference === original.reference ? current[endpoint] : null
+}
+
+function waitEndpointReady(system: System, process: ProcessHandle, endpoint: "server" | "client", timeout = 10_000) {
+  if (endpointReady(endpointState(system, process, endpoint), endpoint)) return Promise.resolve()
+
+  return new Promise<void>((resolve, reject) => {
+    const model = representation(system)
+    const reference = processReference(process)
+    const finish = (work: () => void) => {
+      clearTimeout(timer)
+      stopStart()
+      stopReady()
+      stopExit()
+      work()
+    }
+    const inspect = () => {
+      if (endpointReady(endpointState(system, process, endpoint), endpoint)) finish(resolve)
+    }
+    const stopStart = model.on(`endpoint:${reference}:${endpoint}:start`, inspect)
+    const stopReady = model.on(`endpoint:${reference}:${endpoint}:ready`, inspect)
+    const stopExit = model.on(`process:${reference}:exit`, () => finish(() => reject(new Error(`Process "${process.identity}" exited`))))
+    const timer = setTimeout(() => finish(() => reject(new Error("The Endpoint did not become ready before the timeout"))), timeout)
+    inspect()
+  })
+}
+
+function endpointReady(state: ProcessState["server"] | ProcessState["client"], endpoint: "server" | "client") {
+  return state !== null && (endpoint === "client" || "ready" in state && state.ready)
+}
+
+function serviceState(system: System, key: ServiceKey) {
+  const model = representation(system)
+  const process = key.program === undefined
+    ? model.processes.get(key.process)
+    : [...model.processes.values()].find(candidate => candidate.program === key.program && (candidate.identity === key.process || candidate.name === key.process))
+  const endpoint = process?.[key.endpoint]
+  return endpoint?.service === true ? endpoint : null
+}
+
+function frontWindow(system: System, process: ProcessHandle) {
+  const window = processState(system, process).client?.window
+  if (!window || window.minimized) return false
+  return ![...representation(system).processes.values()].some(candidate => {
+    const other = candidate.client?.window
+    return other && !other.minimized && other.layer === window.layer && other.depth > window.depth
+  })
+}
+
+async function uploadRequest(system: System, value: object) {
+  const request = value as { operation?: unknown, file?: unknown }
+  if (request.operation === "access") return representation(system).call("/uploads/access")
+  if (request.operation === "stat") return representation(system).call("/uploads/stat", request.file)
+  throw new Error(`The Uploads API does not know "${String(request.operation)}"`)
+}
+
 function required<Value>(value: Value | undefined, identity = ""): Value {
   if (value !== undefined) return value
   throw new Error(`The System returned no ${identity ? `${identity} ` : ""}snapshot`)
 }
 
-interface Page<Value> { data: Value[], total: number, truncated: boolean }
-interface ProgramSnapshot {
-  reference: string
-  identity: string
-  assetId: string
-  name: string
-  version: string | null
-  description: string | null
-  installed?: boolean
-  hasAgent: boolean
-  server: EndpointDeclaration | null
-  client: ClientDeclaration | null
-}
-interface ProcessSnapshot {
-  reference: string
-  identity: string
-  name: string | null
-  program: string
-  programSnapshot?: ProgramSnapshot
-  parent: string | null
-  options: Record<string, string>
-  startedAt: string
-  server: { declared: boolean, running: boolean, service: boolean }
-  client: { declared: boolean, running: boolean, service: boolean }
-}
-interface ProcessReference {
-  reference: string
-  identity: string
-  name: string | null
-  program: ProgramSnapshot
-  options: Record<string, string>
-  startedAt: string
-  server: { service: boolean } | null
-  client: { service: boolean } | null
-}
-interface EndpointReference { kind: "server" | "client", process: ProcessReference }
-interface EndpointSnapshot { running: boolean, service: boolean }
-interface WindowSnapshot {
-  title: string
-  position: Position
-  size: Size
-  minimized: boolean
-  front: boolean
-  layer: Awaited<ReturnType<Window["layer"]>>
-  location: string
-}
+interface EndpointReference { kind: "server" | "client", process: { identity: string } }
 
 export type Program = CoreProgram
 export const Program = CoreProgram

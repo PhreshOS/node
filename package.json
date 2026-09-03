@@ -36,7 +36,9 @@
     "prepack": "node --run build"
   },
   "dependencies": {
-    "@phreshos/core": "^0.1.37",
+    "@phreshos/core": "^0.1.38",
+    "@the-link/ipc": "^0.2.1",
+    "@the-link/messagepack": "^0.1.0",
     "adm-zip": "^0.6.0",
     "jiti": "^2.7.0"
   },

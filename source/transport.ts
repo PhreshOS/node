@@ -1,138 +1,126 @@
-import { connect, type Socket } from "node:net"
+import { SocketClient } from "@the-link/ipc/socket-client"
+import messagepack from "@the-link/messagepack"
 
-const maximumStreamQueue = 256
+const events = {
+  ready: "/gateway/ready"
+} as const
 
-export interface TransportEvent {
-  event?: string
-  [key: string]: unknown
-}
+/** One persistent owner-local IPC connection to the System Link Manager. */
+export class GatewayConnection {
+  public session: unknown = null
 
-/** Open and retain one owner-local System connection. */
-export function openConnection(path: string) {
-  return new Promise<Socket>((resolve, reject) => {
-    const socket = connect(path)
-    const failed = () => reject(unavailable(path))
+  private active = false
+  private readonly queued: { event: string, values: unknown[] }[] = []
+  private readonly subscribers = new Map<string, Set<(...values: unknown[]) => unknown>>()
 
-    socket.once("connect", () => {
-      socket.off("error", failed)
-      socket.on("error", () => undefined)
-      resolve(socket)
+  private constructor(private readonly link: SocketClient) {
+    link.$inbound.forwardTo((event, ...values) => {
+      if (event === events.ready) return
+      if (!this.active) this.queued.push({ event, values })
+      else this.deliver(event, values)
     })
-    socket.once("error", failed)
-  })
-}
+  }
 
-/** Execute one short authoritative System-control request. */
-export function request(path: string, target: "api" | "system", request: unknown, signal?: AbortSignal) {
-  return new Promise<unknown>((resolve, reject) => {
-    const socket = connect(path)
-    let buffer = ""
-    let settled = false
-    const finish = (work: () => void) => {
-      if (settled) return
-      settled = true
-      signal?.removeEventListener("abort", cancel)
-      socket.destroy()
-      work()
-    }
-    const cancel = () => finish(() => reject(signal?.reason instanceof Error ? signal.reason : new Error("The request was cancelled")))
+  public static async open(path: string) {
+    const link = new SocketClient(path)
+    const connection = new GatewayConnection(link)
 
-    signal?.addEventListener("abort", cancel, { once: true })
-    socket.on("connect", () => socket.write(`${JSON.stringify({ target, request })}\n`))
-    socket.on("data", chunk => {
-      buffer += String(chunk)
-      const boundary = buffer.indexOf("\n")
-      if (boundary < 0) return
+    link.setSerialize(messagepack.serialize)
+    link.setDeserialize(messagepack.deserialize)
 
-      let outcome: RequestOutcome
-      try { outcome = JSON.parse(buffer.slice(0, boundary)) as RequestOutcome }
-      catch { return finish(() => reject(new Error("The System returned an invalid response"))) }
+    const readiness = ready(link)
 
-      if (outcome.success) finish(() => resolve(outcome.result))
-      else finish(() => reject(new Error(outcome.error)))
-    })
-    socket.on("error", () => finish(() => reject(unavailable(path))))
-    socket.on("close", () => finish(() => reject(new Error("The System closed the request without an answer"))))
-
-    if (signal?.aborted) cancel()
-  })
-}
-
-/** Stream one long-running authoritative System operation. */
-export function stream(path: string, target: "program", request: unknown, signal?: AbortSignal) {
-  const events: TransportEvent[] = []
-  let wake: (() => void) | null = null
-  let ended = false
-  let failure: Error | null = null
-  const socket = connect(path)
-  const cancel = () => socket.destroy(signal?.reason instanceof Error ? signal.reason : undefined)
-
-  if (signal?.aborted) cancel()
-  else signal?.addEventListener("abort", cancel, { once: true })
-
-  let buffer = ""
-
-  socket.on("connect", () => socket.write(`${JSON.stringify({ target, request })}\n`))
-  socket.on("data", chunk => {
-    buffer += String(chunk)
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-
-    for (const line of lines) if (line.trim()) {
-      if (events.length >= maximumStreamQueue) {
-        failure = new Error(`System stream queue exceeded its capacity of ${maximumStreamQueue}`)
-        socket.destroy()
-        break
-      }
-
-      let event: TransportEvent
-      try { event = JSON.parse(line) as TransportEvent }
-      catch {
-        failure = new Error("The System returned an invalid stream event")
-        socket.destroy()
-        break
-      }
-
-      if (event.event === "error") failure = new Error(String(event.message))
-      else events.push(event)
-    }
-    wake?.()
-    wake = null
-  })
-  socket.on("error", error => {
-    failure = signal?.aborted
-      ? signal.reason instanceof Error ? signal.reason : new Error("The operation was cancelled")
-      : error
-    wake?.()
-    wake = null
-  })
-  socket.on("close", () => {
-    ended = true
-    signal?.removeEventListener("abort", cancel)
-    wake?.()
-    wake = null
-  })
-
-  return (async function* () {
     try {
-      while (true) {
-        if (events.length) {
-          yield events.shift()!
-          continue
-        }
-        if (failure) throw failure
-        if (ended) return
-        await new Promise<void>(resolve => { wake = resolve })
-      }
-    } finally {
-      signal?.removeEventListener("abort", cancel)
-      socket.destroy()
+      await link.connect()
+    } catch (error) {
+      readiness.cancel()
+      await link.disconnect()
+      throw unavailable(path, error)
     }
-  })()
+
+    try {
+      connection.session = await readiness.promise
+      return connection
+    } catch (error) {
+      await link.disconnect()
+      throw new Error("The System Gateway did not establish an owner session", { cause: error })
+    }
+  }
+
+  public onDisconnect(subscriber: (error: Error) => void) {
+    return this.link.$internal.subscribe("disconnect", subscriber)
+  }
+
+  public disconnect() {
+    return this.link.disconnect()
+  }
+
+  /** Invoke one operation exposed by the connected System Link Manager. */
+  public call<Result = unknown>(event: string, ...values: unknown[]) {
+    return this.link.$outbound.publishFirst<Result>(event, ...values)
+  }
+
+  /** Observe one live event emitted by the connected System Link Manager. */
+  public subscribe(event: string, subscriber: (...values: unknown[]) => unknown) {
+    const subscribers = this.subscribers.get(event) ?? new Set()
+
+    subscribers.add(subscriber)
+    this.subscribers.set(event, subscribers)
+
+    return () => {
+      subscribers.delete(subscriber)
+      if (!subscribers.size) this.subscribers.delete(event)
+    }
+  }
+
+  /** Begin delivery after the connected representation has installed its listeners. */
+  public activate() {
+    if (this.active) return
+    this.active = true
+
+    for (const { event, values } of this.queued.splice(0)) this.deliver(event, values)
+  }
+
+  private deliver(event: string, values: unknown[]) {
+    for (const subscriber of this.subscribers.get(event) ?? []) {
+      try { subscriber(...values) }
+      catch { /* One local observer cannot break boundary delivery. */ }
+    }
+  }
 }
 
-function unavailable(path: string) {
-  return new Error(`No System is listening at ${path} — start PhreshOS first`)
+function ready(link: SocketClient) {
+  let received: () => void = () => undefined
+  let disconnected: () => void = () => undefined
+  const promise = new Promise<unknown>((resolve, reject) => {
+    received = link.$inbound.subscribeOnce(events.ready, value => {
+      disconnected()
+      resolve(value)
+    })
+    disconnected = link.$internal.subscribeOnce("disconnect", error => {
+      received()
+      reject(exception(error))
+    })
+  })
+
+  return {
+    promise,
+    cancel() {
+      received()
+      disconnected()
+    }
+  }
 }
 
-type RequestOutcome = Readonly<{ success: true, result: unknown }> | Readonly<{ success: false, error: string }>
+function exception(error: unknown) {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+function unavailable(path: string, cause: unknown) {
+  return new Error(`No System is listening at ${path} — start PhreshOS first`, { cause })
+}
+
+/** Open and authenticate one owner-local System connection. */
+export function openConnection(path: string) {
+  return GatewayConnection.open(path)
+}

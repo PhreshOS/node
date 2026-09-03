@@ -10,9 +10,9 @@ import type {
   TrafficEvents
 } from "@phreshos/core"
 import Events, { stream } from "./events.js"
+import type SystemRepresentation from "./representation.js"
 
 type Kind = "publish" | "ask" | "answer"
-type Request = (value: object, signal?: AbortSignal) => Promise<unknown>
 type ResolveEndpoint = (value: unknown) => Endpoint
 
 /** Directed traffic originating from one canonical Endpoint. */
@@ -21,20 +21,18 @@ export class EndpointTrafficHandle<Definitions extends object = {}> extends Even
   never
 > {
   public constructor(
-    private readonly request: Request,
+    private readonly representation: SystemRepresentation,
     private readonly process: string,
     private readonly endpoint: "server" | "client",
     protected readonly resolveEndpoint: ResolveEndpoint
   ) {
-    super([], (event, signal, timeout) => request({
-      capability: "traffic",
-      operation: "wait",
+    super([], (event, subscriber, impossible) => representation.follow({
+      scope: "traffic",
       process,
       endpoint,
       kind: "publish",
-      event,
-      timeout
-    }, signal).then(value => publication(value, resolveEndpoint, event === null)))
+      event
+    }, (received, values) => subscriber(publication({ event: received, values }, resolveEndpoint, event === null)), impossible))
   }
 
   public subscribeAsks<Payload = unknown>(subscriber: AskSubscriber<Payload>): Cleanup {
@@ -54,29 +52,13 @@ export class EndpointTrafficHandle<Definitions extends object = {}> extends Even
     subscriber: (capture: Capture) => unknown,
     impossible?: (error: Error) => void
   ): Cleanup {
-    const controller = new AbortController()
-
-    void (async () => {
-      while (!controller.signal.aborted) {
-        try {
-          const value = await this.request({
-            capability: "traffic",
-            operation: "wait",
-            process: this.process,
-            endpoint: this.endpoint,
-            kind,
-            event: null,
-            timeout: 86_400_000
-          }, controller.signal)
-          subscriber(convert(value))
-        } catch (error) {
-          if (!controller.signal.aborted) impossible?.(error instanceof Error ? error : new Error(String(error)))
-          controller.abort()
-        }
-      }
-    })()
-
-    return () => controller.abort()
+    return this.representation.follow({
+      scope: "traffic",
+      process: this.process,
+      endpoint: this.endpoint,
+      kind,
+      event: null
+    }, (event, values) => subscriber(convert({ event, values })), impossible)
   }
 }
 

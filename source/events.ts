@@ -1,12 +1,12 @@
 import type { Capture, Cleanup, EventOptions, Subscribable } from "@phreshos/core"
 
-type Wait = (event: string | null, signal: AbortSignal, timeout?: number) => Promise<unknown>
 type Failure = (error: Error) => void
 type Register<Message> = (subscriber: (message: Message) => unknown, impossible?: Failure) => Cleanup
+type Subscribe = (event: string | null, subscriber: (message: unknown) => unknown, impossible?: Failure) => Cleanup
 
-/** Adapts authoritative one-event waits into the shared Subscribable contract. */
+/** Adapts one live representation source into the shared Subscribable contract. */
 export default class Events<Definitions extends object, Fallback = never> {
-  public constructor(private readonly names: readonly string[], private readonly wait: Wait) {}
+  public constructor(private readonly names: readonly string[], private readonly register: Subscribe) {}
 
   public readonly subscribe = ((
     eventOrSubscriber: string | ((capture: Capture<string, unknown>) => unknown),
@@ -25,9 +25,19 @@ export default class Events<Definitions extends object, Fallback = never> {
     })
   }) as Subscribable<Definitions, Fallback>["subscribe"]
 
-  public readonly waitFor = ((event: string, timeout?: number) => {
-    return this.wait(event, new AbortController().signal, timeout)
-  }) as Subscribable<Definitions, Fallback>["waitFor"]
+  public readonly waitFor = ((event: string, timeout = 10_000) => new Promise((resolve, reject) => {
+    let stop: Cleanup = () => undefined
+    const timer = setTimeout(() => {
+      stop()
+      reject(new Error(`The "${event}" event did not occur before the timeout`))
+    }, timeout)
+    const finish = (work: () => void) => {
+      clearTimeout(timer)
+      stop()
+      work()
+    }
+    stop = this.listen(event, message => finish(() => resolve(message)), error => finish(() => reject(error)))
+  })) as Subscribable<Definitions, Fallback>["waitFor"]
 
   public readonly events = ((eventOrOptions: string | EventOptions = {}, namedOptions: EventOptions = {}) => {
     if (typeof eventOrOptions === "string") {
@@ -48,20 +58,7 @@ export default class Events<Definitions extends object, Fallback = never> {
   }) as Subscribable<Definitions, Fallback>["events"]
 
   private listen(event: string | null, subscriber: (message: unknown) => unknown, impossible?: Failure): Cleanup {
-    const controller = new AbortController()
-
-    void (async () => {
-      while (!controller.signal.aborted) {
-        try { subscriber(await this.wait(event, controller.signal, 86_400_000)) }
-        catch (error) {
-          if (!controller.signal.aborted && timeout(error)) continue
-          if (!controller.signal.aborted) impossible?.(failure(error))
-          controller.abort()
-        }
-      }
-    })()
-
-    return () => controller.abort()
+    return this.register(event, subscriber, impossible)
   }
 }
 
@@ -117,12 +114,4 @@ export function stream<Message>(register: Register<Message>, options: EventOptio
       options.signal?.removeEventListener("abort", abort)
     }
   })()
-}
-
-function timeout(error: unknown) {
-  return error instanceof Error && /timeout|timed out/i.test(error.message)
-}
-
-function failure(error: unknown) {
-  return error instanceof Error ? error : new Error(String(error))
 }
