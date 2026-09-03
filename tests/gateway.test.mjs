@@ -167,6 +167,9 @@ test("System.connect exposes the shared System contract over one owner-local add
       if (envelope.target === "api" && envelope.request.capability === "appearance") {
         socket.end(`${JSON.stringify({ success: true, result: { background: { light: "#fff" } } })}\n`)
       }
+      if (envelope.target === "api" && envelope.request.capability === "uploads" && envelope.request.operation === "access") {
+        socket.end(`${JSON.stringify({ success: true, result: { path: join(home, "uploads"), limit: 1024 } })}\n`)
+      }
     })
   })
 
@@ -187,6 +190,7 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal("processHandle" in system, false)
     assert.equal(await system.storage.path(), userHome)
     assert.equal(await system.storage.resolve(".."), dirname(userHome))
+    assert.equal(await system.uploads.path(), join(home, "uploads"))
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
 
     const serverService = system.service({ program: "example", process: "main", endpoint: "server" })

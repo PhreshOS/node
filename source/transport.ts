@@ -59,7 +59,7 @@ export function request(path: string, target: "api" | "system", request: unknown
 }
 
 /** Stream one long-running authoritative System operation. */
-export function stream(path: string, target: "program" | "shell", request: unknown, signal?: AbortSignal) {
+export function stream(path: string, target: "program", request: unknown, signal?: AbortSignal) {
   const events: TransportEvent[] = []
   let wake: (() => void) | null = null
   let ended = false

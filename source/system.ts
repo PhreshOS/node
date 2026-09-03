@@ -7,7 +7,6 @@ import {
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   isServiceKey,
-  parseShellEvent,
   type Appearance,
   type ClientDeclaration,
   type EndpointLifecycle,
@@ -53,6 +52,7 @@ import { programPermissions, programSql, programStore } from "./program-resource
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import { openConnection, request, stream, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
+import shell from "./shell.js"
 
 export type ProgramProcessRunOptions = CoreProgramProcessRunOptions
 export type ProgramProcessRunEvent = CoreProgramProcessRunEvent
@@ -70,7 +70,7 @@ type ServiceHandle<Endpoint extends ServiceEndpoint, EventsMap extends object, F
 interface SystemTransport {
   control(request: object, signal?: AbortSignal): Promise<unknown>
   api(request: object, signal?: AbortSignal): Promise<unknown>
-  stream(target: "program" | "shell", request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
+  stream(target: "program", request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
 }
 
 interface SystemState {
@@ -91,20 +91,19 @@ const ClientEndpointBase = CoreClientEndpoint as unknown as new () => object
 
 /** One connected owner-local implementation of the shared System contract. */
 export class System implements CoreSystem {
-  public readonly storage = nativeStorage(homedir(), "the native filesystem")
+  public readonly storage: Storage
   public readonly appearance: WritableAppearance
   public readonly program: SystemProgram
   public readonly process: SystemProcess
   public readonly uploads: SystemUploads
 
-  public fetch(input: RequestInfo | URL, init?: RequestInit) {
-    return fetch(input, init)
+  public async fetch(input: RequestInfo | URL, init?: RequestInit) {
+    const request = new Request(input, init)
+    return await fetch(request, { signal: connectedSignal(this, request.signal) })
   }
 
   public async *shell(command: string, options: ShellOptions = {}) {
-    const { signal, ...settings } = options
-
-    for await (const event of transport(this).stream("shell", { command, options: settings }, signal)) yield parseShellEvent(event)
+    yield* shell(command, { ...options, signal: connectedSignal(this, options.signal) })
   }
 
   private constructor(address: string, connection: Socket) {
@@ -117,10 +116,12 @@ export class System implements CoreSystem {
     }
 
     systems.set(this, { address, connection, handles, lifetime, transport, closed: false })
+    connection.once("close", () => closeSystem(this, new Error("This System connection is closed")))
+    this.storage = nativeStorage(homedir(), "the native filesystem", () => connectedSignal(this))
     this.appearance = new SystemAppearance(transport)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
-    this.uploads = new Uploads(value => transport.api(value))
+    this.uploads = new Uploads(value => transport.api(value), () => connectedSignal(this))
   }
 
   /** Connect to the System selected by argument, environment, or owner default. */
@@ -141,12 +142,7 @@ export class System implements CoreSystem {
 
   /** Close this owner connection and abort every attached operation it owns. */
   public async disconnect() {
-    const state = systemState(this)
-    if (state.closed) return
-    state.closed = true
-    state.lifetime.abort(new Error("This System connection is closed"))
-    state.connection.destroy()
-    state.handles.clear()
+    closeSystem(this, new Error("This System connection is closed"))
   }
 
   public service<Endpoint extends ServiceEndpoint>(key: ServiceAddress<Endpoint>): ServiceHandle<Endpoint, {}>
@@ -173,6 +169,15 @@ function systemState(system: System) {
   const state = systems.get(system)
   if (!state) throw new Error("Unknown System connection")
   return state
+}
+
+function closeSystem(system: System, reason: Error) {
+  const state = systemState(system)
+  if (state.closed) return
+  state.closed = true
+  state.lifetime.abort(reason)
+  state.connection.destroy()
+  state.handles.clear()
 }
 
 function requireConnected(system: System) {
@@ -291,8 +296,8 @@ class ProgramHandle extends ProgramBase {
       capability: "program", operation: "wait", handle: address, event, timeout
     }, signal)))
     const request = (value: object) => transport(system).api(value)
-    this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`)
-    this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`)
+    this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`, () => connectedSignal(system))
+    this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`, () => connectedSignal(system))
     this.store = programStore(request, address)
     this.logs = programSql(request, address, "logs")
     this.database = programSql(request, address, "database")
