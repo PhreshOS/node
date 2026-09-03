@@ -28,10 +28,13 @@ const service: Service = connected.service({ program: "example", process: "main"
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
 
-program.permissions.get("files")
+program.permissions.get("all")
 program.permissions.all()
-program.permissions.set("files", true)
-program.permissions.delete("files")
+program.permissions.set("all", true)
+program.permissions.delete("all")
+
+// @ts-expect-error Permission names are closed by the Core catalog.
+program.permissions.get("files")
 
 void canonical
 void shared

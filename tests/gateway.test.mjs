@@ -112,7 +112,7 @@ test("Project returns the original development and installation generators", asy
     identity: "example",
     client: {
       location: "dist/client",
-      permissions: { files: true },
+      permissions: { all: true },
       development: { url: `http://localhost:${address.port}/` }
     }
   })
@@ -134,8 +134,8 @@ test("Project returns the original development and installation generators", asy
     assert.equal(await project.dev(system), development)
     assert.equal(await project.install(system), installation)
     assert.equal(definitions[0].client.location, `http://localhost:${address.port}/`)
-    assert.deepEqual(definitions[0].client.permissions, { files: true })
-    assert.deepEqual(definitions[1].client.permissions, { files: true })
+    assert.deepEqual(definitions[0].client.permissions, { all: true })
+    assert.deepEqual(definitions[1].client.permissions, { all: true })
     assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
   } finally {
     await new Promise((resolve, reject) => client.close(error => error ? reject(error) : resolve()))
@@ -365,10 +365,10 @@ test("a Process run is addressed to the exact Program and follows its signal", a
     assert.equal(typeof created.store.get, "function")
     assert.equal(typeof created.logs.query, "function")
     assert.equal(typeof created.database.query, "function")
-    assert.deepEqual(await created.permissions.get("files"), ["read"])
-    assert.deepEqual(await created.permissions.all(), { files: ["read"] })
-    assert.deepEqual(await created.permissions.set("files", true), { permission: ["read"], needReload: false })
-    assert.deepEqual(await created.permissions.delete("files"), { permission: null, needReload: false })
+    assert.deepEqual(await created.permissions.get("all"), [])
+    assert.deepEqual(await created.permissions.all(), { all: [] })
+    assert.deepEqual(await created.permissions.set("all", true), { permission: [], needReload: false })
+    assert.deepEqual(await created.permissions.delete("all"), { permission: null, needReload: false })
     assert.equal((await created.icon()).type, "image/png")
     assert.equal(await created.agent(), "Program agent")
     await created.data.write("state.txt", "canonical")
@@ -449,9 +449,9 @@ function programApiResult(request, home) {
   if (request.operation === "icon") return [137, 80, 78, 71]
   if (request.operation === "store" && request.storeOperation === "get") return "stored"
   if (request.operation === "query") return [{ value: 1 }]
-  if (request.operation === "permissions" && request.permissionOperation === "get") return ["read"]
-  if (request.operation === "permissions" && request.permissionOperation === "all") return { files: ["read"] }
-  if (request.operation === "permissions" && request.permissionOperation === "set") return { permission: ["read"], needReload: false }
+  if (request.operation === "permissions" && request.permissionOperation === "get") return []
+  if (request.operation === "permissions" && request.permissionOperation === "all") return { all: [] }
+  if (request.operation === "permissions" && request.permissionOperation === "set") return { permission: [], needReload: false }
   if (request.operation === "permissions" && request.permissionOperation === "delete") return { permission: null, needReload: false }
   return true
 }

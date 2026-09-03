@@ -13,11 +13,15 @@ export {
 } from "./system.js"
 export {
   Service,
+  clientPermissionCatalog,
+  isPermissionName,
   type ClientLaunch,
   type Launch,
   type Permission,
   type PermissionChange,
   type PermissionInput,
+  type PermissionName,
+  type PermissionValue,
   type Permissions,
   type ProgramPermissions,
   type ProgramDefinition,

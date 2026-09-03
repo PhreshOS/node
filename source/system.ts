@@ -7,6 +7,7 @@ import {
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   isServiceKey,
+  parseClientPermissions,
   type Appearance,
   type ClientDeclaration,
   type EndpointLifecycle,
@@ -326,7 +327,7 @@ class ProgramHandle extends ProgramBase {
       position: this.snapshot.client.position,
       layer: this.snapshot.client.layer,
       minimize: this.snapshot.client.minimize,
-      permissions: Object.freeze(Object.fromEntries(Object.entries(this.snapshot.client.permissions).map(([name, values]) => [name, Object.freeze([...values])])))
+      permissions: parseClientPermissions(this.snapshot.client.permissions)
     }) : null
   }
 

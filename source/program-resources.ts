@@ -1,4 +1,13 @@
-import { parsePermission, parsePermissionChange, parsePermissions, type PermissionInput, type ProgramPermissions, type ProgramSql, type ProgramStore } from "@phreshos/core"
+import {
+  parsePermission,
+  parsePermissionChange,
+  parsePermissions,
+  type PermissionInput,
+  type PermissionName,
+  type ProgramPermissions,
+  type ProgramSql,
+  type ProgramStore
+} from "@phreshos/core"
 
 type Request = (value: object) => Promise<unknown>
 type ProgramAddress = Readonly<{ identity: string, reference: string }>
@@ -36,7 +45,7 @@ export function programSql(request: Request, handle: ProgramAddress, database: "
 
 /** Program permission management carried through the owner-local Gateway. */
 export function programPermissions(request: Request, handle: ProgramAddress): ProgramPermissions {
-  const operate = (permissionOperation: "all" | "get" | "set" | "delete", name?: string, permission?: Exclude<PermissionInput, null>) => request({
+  const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "set" | "delete", name?: Name, permission?: Exclude<PermissionInput<Name>, null>) => request({
     capability: "program",
     operation: "permissions",
     handle,
@@ -46,10 +55,10 @@ export function programPermissions(request: Request, handle: ProgramAddress): Pr
   })
 
   return {
-    async get(name) { return parsePermission(await operate("get", name)) },
+    async get(name) { return parsePermission(name, await operate("get", name)) },
     async all() { return parsePermissions(await operate("all")) },
-    async set(name, permission) { return parsePermissionChange(await operate("set", name, permission)) },
-    async delete(name) { return parsePermissionChange(await operate("delete", name)) }
+    async set(name, permission) { return parsePermissionChange(name, await operate("set", name, permission)) },
+    async delete(name) { return parsePermissionChange(name, await operate("delete", name)) }
   }
 }
 
