@@ -1,5 +1,7 @@
 import { connect, type Socket } from "node:net"
 
+const maximumStreamQueue = 256
+
 export interface TransportEvent {
   event?: string
   [key: string]: unknown
@@ -56,8 +58,8 @@ export function request(path: string, target: "api" | "system", request: unknown
   })
 }
 
-/** Stream one Program lifecycle operation until the System completes it. */
-export function streamProgram(path: string, request: unknown, signal?: AbortSignal) {
+/** Stream one long-running authoritative System operation. */
+export function stream(path: string, target: "program" | "shell", request: unknown, signal?: AbortSignal) {
   const events: TransportEvent[] = []
   let wake: (() => void) | null = null
   let ended = false
@@ -70,14 +72,27 @@ export function streamProgram(path: string, request: unknown, signal?: AbortSign
 
   let buffer = ""
 
-  socket.on("connect", () => socket.write(`${JSON.stringify({ target: "program", request })}\n`))
+  socket.on("connect", () => socket.write(`${JSON.stringify({ target, request })}\n`))
   socket.on("data", chunk => {
     buffer += String(chunk)
     const lines = buffer.split("\n")
     buffer = lines.pop() ?? ""
 
     for (const line of lines) if (line.trim()) {
-      const event = JSON.parse(line) as TransportEvent
+      if (events.length >= maximumStreamQueue) {
+        failure = new Error(`System stream queue exceeded its capacity of ${maximumStreamQueue}`)
+        socket.destroy()
+        break
+      }
+
+      let event: TransportEvent
+      try { event = JSON.parse(line) as TransportEvent }
+      catch {
+        failure = new Error("The System returned an invalid stream event")
+        socket.destroy()
+        break
+      }
+
       if (event.event === "error") failure = new Error(String(event.message))
       else events.push(event)
     }

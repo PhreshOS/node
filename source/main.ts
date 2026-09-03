@@ -23,6 +23,8 @@ export {
   type ProgramDefinition,
   type ServerLaunch,
   type ServiceKey,
+  type ShellEvent,
+  type ShellOptions,
   type ProgramStartup,
   type Storage,
 } from "@phreshos/core"

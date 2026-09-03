@@ -7,6 +7,7 @@ import {
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   isServiceKey,
+  parseShellEvent,
   type Appearance,
   type ClientDeclaration,
   type EndpointLifecycle,
@@ -27,6 +28,7 @@ import {
   type ProgramStore,
   type ProcessEvents,
   type ServiceKey,
+  type ShellOptions,
   type Size,
   type System as CoreSystem,
   type SystemProcessEvents,
@@ -49,7 +51,7 @@ import { resolveHome } from "./home.js"
 import { filesystemStorage, nativeStorage } from "./storage.js"
 import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
-import { openConnection, request, streamProgram, type TransportEvent } from "./transport.js"
+import { openConnection, request, stream, type TransportEvent } from "./transport.js"
 import Uploads from "./uploads.js"
 
 export type ProgramProcessRunOptions = CoreProgramProcessRunOptions
@@ -68,7 +70,7 @@ type ServiceHandle<Endpoint extends ServiceEndpoint, EventsMap extends object, F
 interface SystemTransport {
   control(request: object, signal?: AbortSignal): Promise<unknown>
   api(request: object, signal?: AbortSignal): Promise<unknown>
-  lifecycle(request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
+  stream(target: "program" | "shell", request: object, signal?: AbortSignal): AsyncGenerator<TransportEvent, void, void>
 }
 
 interface SystemState {
@@ -99,13 +101,19 @@ export class System implements CoreSystem {
     return fetch(input, init)
   }
 
+  public async *shell(command: string, options: ShellOptions = {}) {
+    const { signal, ...settings } = options
+
+    for await (const event of transport(this).stream("shell", { command, options: settings }, signal)) yield parseShellEvent(event)
+  }
+
   private constructor(address: string, connection: Socket) {
     const lifetime = new AbortController()
     const handles = new HandleRegistry()
     const transport: SystemTransport = {
       control: (value, signal) => request(address, "system", value, connectedSignal(this, signal)),
       api: (value, signal) => request(address, "api", value, connectedSignal(this, signal)),
-      lifecycle: (value, signal) => streamProgram(address, value, connectedSignal(this, signal))
+      stream: (target, value, signal) => stream(address, target, value, connectedSignal(this, signal))
     }
 
     systems.set(this, { address, connection, handles, lifetime, transport, closed: false })
@@ -125,7 +133,7 @@ export class System implements CoreSystem {
   /** Atomically replace one runtime Program without touching its installed form. */
   public async forceCreateProgram(source: ProgramDefinition | string): Promise<Program> {
     requireConnected(this)
-    for await (const event of transport(this).lifecycle({ word: "force-create", program: source })) {
+    for await (const event of transport(this).stream("program", { word: "force-create", program: source })) {
       if (event.event === "created") return programHandle(this, required(event.program as ProgramSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Program")
@@ -242,7 +250,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   }
 
   public async create(source: ProgramDefinition | string) {
-    for await (const event of transport(this.system).lifecycle({ word: "create", program: source })) {
+    for await (const event of transport(this.system).stream("program", { word: "create", program: source })) {
       if (event.event === "created") return programHandle(this.system, required(event.program as ProgramSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Program")
@@ -335,7 +343,7 @@ class ProgramHandle extends ProgramBase {
   }
 
   public async installed() {
-    for await (const event of transport(this.system).lifecycle({ word: "installed", handle: this.address() })) {
+    for await (const event of transport(this.system).stream("program", { word: "installed", handle: this.address() })) {
       if (event.event === "installedState") return event.installed === true
     }
     throw new Error("The System returned no Program installation state")
@@ -345,14 +353,14 @@ class ProgramHandle extends ProgramBase {
   public uninstall(everything = false) { return command(this.system, { word: "uninstall-existing", handle: this.address(), everything }) }
 
   public async fork(identity: string) {
-    for await (const event of transport(this.system).lifecycle({ word: "fork", handle: this.address(), identity })) {
+    for await (const event of transport(this.system).stream("program", { word: "fork", handle: this.address(), identity })) {
       if (event.event === "created") return programHandle(this.system, required(event.program as ProgramSnapshot | undefined))
     }
     throw new Error("The System did not confirm the forked Program")
   }
 
   public async forget() {
-    for await (const _event of transport(this.system).lifecycle({ word: "forget", handle: this.address() })) { /* consume completion */ }
+    for await (const _event of transport(this.system).stream("program", { word: "forget", handle: this.address() })) { /* consume completion */ }
   }
 
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
@@ -362,7 +370,7 @@ class ProgramStartup {
   public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
 
   public async get() {
-    for await (const event of transport(this.system).lifecycle({
+    for await (const event of transport(this.system).stream("program", {
       word: "startup", handle: this.program.address(), operation: "get"
     })) {
       if (event.event === "startup") return event.launch as Launch | null
@@ -379,7 +387,7 @@ class ProgramStartup {
   }
 
   private async change(operation: "enable" | "disable", launch?: Launch) {
-    for await (const event of transport(this.system).lifecycle({
+    for await (const event of transport(this.system).stream("program", {
       word: "startup", handle: this.program.address(), operation, launch
     })) {
       if (event.event === "startup") return
@@ -413,7 +421,7 @@ class ProgramProcesses extends Events<ProgramProcessEvents> {
   public async *run(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
     let process: ProcessHandle | null = null
 
-    for await (const event of transport(this.system).lifecycle({
+    for await (const event of transport(this.system).stream("program", {
       word: "run-process",
       handle: this.program.address(),
       launch
@@ -457,7 +465,7 @@ class ProgramProcesses extends Events<ProgramProcessEvents> {
   }
 
   private async createExact(word: "create-process" | "find-or-create-process", launch: Launch) {
-    for await (const event of transport(this.system).lifecycle({ word, handle: this.program.address(), launch })) {
+    for await (const event of transport(this.system).stream("program", { word, handle: this.program.address(), launch })) {
       if (event.event === "createdProcess") return processHandle(this.system, required(event.process as ProcessSnapshot | undefined))
     }
     throw new Error("The System did not confirm the created Process")
@@ -777,7 +785,7 @@ async function listProcesses(system: System) {
 }
 
 async function* command(system: System, request: object): AsyncGenerator<ProgramCommandChunk, void, void> {
-  for await (const event of transport(system).lifecycle(request)) {
+  for await (const event of transport(system).stream("program", request)) {
     if (event.event === "output") yield {
       stream: event.stream === "stderr" ? "stderr" : "stdout",
       text: String(event.text ?? "")
