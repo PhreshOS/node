@@ -44,8 +44,8 @@ export function request(path: string, target: "api" | "system", request: unknown
       const boundary = buffer.indexOf("\n")
       if (boundary < 0) return
 
-      let outcome: Outcome
-      try { outcome = JSON.parse(buffer.slice(0, boundary)) as Outcome }
+      let outcome: RequestOutcome
+      try { outcome = JSON.parse(buffer.slice(0, boundary)) as RequestOutcome }
       catch { return finish(() => reject(new Error("The System returned an invalid response"))) }
 
       if (outcome.success) finish(() => resolve(outcome.result))
@@ -135,4 +135,4 @@ function unavailable(path: string) {
   return new Error(`No System is listening at ${path} — start PhreshOS first`)
 }
 
-type Outcome = Readonly<{ success: true, result: unknown }> | Readonly<{ success: false, error: string }>
+type RequestOutcome = Readonly<{ success: true, result: unknown }> | Readonly<{ success: false, error: string }>
