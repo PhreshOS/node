@@ -1,9 +1,22 @@
 # `@phreshos/node`
 
-Node.js access to a running PhreshOS System and local Program projects.
+Node.js access to a PhreshOS System and local Program projects.
 
-The Node SDK exposes the same System model used inside Server Endpoints and adds
-only connection lifecycle and project tooling.
+[Documentation](https://docs.phreshos.com/sdks/node) ·
+[System](https://docs.phreshos.com/system) ·
+[First Program](https://docs.phreshos.com/first-program) ·
+[Source](https://github.com/PhreshOS/node)
+
+## Role
+
+The Node SDK exposes the same complete System contract available inside Server
+Endpoints. It adds only the lifecycle of an externally owned connection and the
+`Project` authoring API for building, running, installing, and packaging local
+Program projects.
+
+The connection transport is not public API. Core owns the domain model, and the
+System remains authoritative whether an operation can execute locally or must
+cross the connection boundary.
 
 ## Installation
 
@@ -14,49 +27,21 @@ only connection lifecycle and project tooling.
 | Bun | `bun add @phreshos/node` |
 | Yarn | `yarn add @phreshos/node` |
 
-## System
-
-```ts
-import { System } from "@phreshos/node"
-
-const system = await System.connect()
-const programs = await system.program.list()
-
-await system.disconnect()
-```
-
-The transport is not public API. Code receives the same System, Program,
-Process, Endpoint, Service, Window, storage, and upload handles used by the
-Server SDK. `disconnect()` exists because external Node code owns the
-connection.
-
-## Project
-
 ```ts
 import { Project, System } from "@phreshos/node"
 
-const project = await Project.open()
 const system = await System.connect()
+const project = await Project.open()
 
-for await (const event of await project.start(system, { signal })) {
+for await (const event of await project.start(system)) {
   console.log(event)
 }
 
 await system.disconnect()
 ```
 
-`Project` owns authoring concerns: builds, development and production
-definitions, installation, execution shortcuts, and packaging. The System
-receives only the resulting Program definition.
-
-`Project.dev()` starts and supervises a declared Client development command. It
-assigns an available port when no URL is declared and provides the port and
-public Program asset base through `PHRESHOS_CLIENT_PORT` and
-`PHRESHOS_CLIENT_BASE`.
-
-`Project.open()` starts from the current working directory by default.
-`System.connect()` resolves an explicit System home, then `PHRESHOS_HOME`,
-then the current owner's default System home.
+See [Node SDK](https://docs.phreshos.com/sdks/node) for System connection and
+Project lifecycle details.
 
 ## Development
 
@@ -65,14 +50,19 @@ bun install --frozen-lockfile
 bun run verify
 ```
 
-See the [Node SDK documentation](https://github.com/PhreshOS/docs/blob/main/content/docs/sdks/node.mdx)
-for the public model.
+`verify` checks the types, builds the package, and runs the connection and
+Project tests.
 
-## Repository boundary
+## Related repositories
 
-This repository owns the external Node connection and local-project API. Core
-owns the domain model, Server owns the Endpoint runtime adapter, and CLI owns
-terminal presentation and native service management.
+- [`@phreshos/core`](https://github.com/PhreshOS/core) owns the shared System
+  and runtime contracts.
+- [`@phreshos/server`](https://github.com/PhreshOS/server) exposes the same
+  System contract inside Server Endpoints.
+- [`@phreshos/cli`](https://github.com/PhreshOS/cli) presents Project and System
+  operations as terminal commands.
+- [PhreshOS System](https://github.com/PhreshOS/system) owns the connected
+  runtime.
 
 ## License
 
