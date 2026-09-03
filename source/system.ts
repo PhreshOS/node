@@ -58,6 +58,7 @@ import SystemRepresentation, {
 import { GatewayConnection, openConnection } from "./transport.js"
 import Uploads from "./uploads.js"
 import shell from "./shell.js"
+import websocket from "./websocket.js"
 
 export type ProgramProcessRunOptions = CoreProgramProcessRunOptions
 export type ProgramProcessRunEvent = CoreProgramProcessRunEvent
@@ -99,6 +100,10 @@ export class System implements CoreSystem {
   public async fetch(input: RequestInfo | URL, init?: RequestInit) {
     const request = new Request(input, init)
     return await fetch(request, { signal: connectedSignal(this, request.signal) })
+  }
+
+  public websocket(url: string | URL, protocols?: string | string[]) {
+    return websocket(url, protocols, connectedSignal(this))
   }
 
   public async *shell(command: string, options: ShellOptions = {}) {
