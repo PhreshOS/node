@@ -18,7 +18,6 @@ export {
   type ClientLaunch,
   type Launch,
   type Permission,
-  type PermissionChange,
   type PermissionDefinition,
   type PermissionDefinitions,
   type PermissionInput,
