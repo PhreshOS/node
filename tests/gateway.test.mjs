@@ -234,12 +234,23 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     client: null
   }
   const replacement = { ...program, reference: "replacement-reference", assetId: "00000000-0000-4000-8000-000000000002" }
+  const parentRecord = {
+    reference: "parent-reference",
+    identity: "parent-identity",
+    name: "manager",
+    program: program.identity,
+    parent: null,
+    options: {},
+    startedAt: new Date(),
+    server: null,
+    client: null
+  }
   const processRecord = {
     reference: "process-reference",
     identity: "process-identity",
     name: null,
     program: program.identity,
-    parent: null,
+    parent: parentRecord,
     options: { mode: "test" },
     startedAt: new Date(),
     server: { ready: true, service: false },
@@ -247,6 +258,14 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
   }
   let creations = 0
   const server = createGateway(address, {
+    session: {
+      authorization: "owner",
+      linkManager: { appearance: { key: "appearance", value: {} } },
+      authManager: {
+        programManager: { programs: [[program.identity, program]] },
+        processManager: { processes: [[parentRecord.identity, parentRecord]] }
+      }
+    },
     async route({ event, values, publish }) {
       calls.push({ event, values })
       const [, ...input] = values
@@ -276,6 +295,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
         const cancelled = new Promise(resolve => { cancel = resolve })
         commands.set(stream, cancel)
         await publish("/auth/process/created", processRecord)
+        await publish("/auth/process/exited", parentRecord, 0, null)
         await publish("/auth/program/command-output", stream, { event: "started", process: processRecord })
         await cancelled
         await publish("/auth/process/exited", processRecord, null, "SIGTERM")
@@ -285,6 +305,11 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       if (event === "/auth/program/command-cancel") {
         commands.get(input[0])?.()
         commands.delete(input[0])
+      }
+
+      if (event === "/auth/process/parent") {
+        assert.deepEqual(input[0], { identity: processRecord.identity, reference: processRecord.reference })
+        return { ...parentRecord, program }
       }
     }
   })
@@ -328,6 +353,10 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await system.process.find(processRecord.identity), started.value.process)
     assert.equal((await created.process.list())[0], started.value.process)
     assert.equal(await started.value.process.option("mode"), "test")
+    const retainedParent = await started.value.process.parent()
+    assert(retainedParent instanceof Process)
+    assert.equal(retainedParent.identity, parentRecord.identity)
+    assert.equal(await retainedParent.exited(), true)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(run.next(), /cancelled by test/)

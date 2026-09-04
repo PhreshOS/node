@@ -51,6 +51,8 @@ import { filesystemStorage, nativeStorage } from "./storage.js"
 import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import SystemRepresentation, {
+  processIdentityState,
+  type ProcessIdentityState,
   type ProcessState,
   type ProgramAddress,
   type ProgramState
@@ -82,7 +84,7 @@ interface SystemState {
 }
 
 const systems = new WeakMap<System, SystemState>()
-const processSnapshots = new WeakMap<object, ProcessState>()
+const processSnapshots = new WeakMap<object, ProcessIdentityState>()
 
 const ProgramBase = CoreProgram as unknown as new () => object
 const ProcessBase = CoreProcess as unknown as new () => object
@@ -201,7 +203,7 @@ function programHandle(system: System, snapshot: ProgramState) {
   return handle
 }
 
-function processHandle(system: System, snapshot: ProcessState) {
+function processHandle(system: System, snapshot: ProcessIdentityState) {
   return systemState(system).handles.obtain(`process:${snapshot.reference}`, () => new ProcessHandle(system, snapshot))
 }
 
@@ -466,7 +468,7 @@ class ProcessHandle extends ProcessBase {
   public readonly server: ServerEndpoint
   public readonly client: ClientEndpoint
 
-  public constructor(private readonly system: System, snapshot: ProcessState) {
+  public constructor(private readonly system: System, snapshot: ProcessIdentityState) {
     super()
     processSnapshots.set(this, snapshot)
     bindEvents(this, new Events<ProcessEvents>(["exit"], (_event, subscriber) => (
@@ -486,11 +488,11 @@ class ProcessHandle extends ProcessBase {
 
   public async parent() {
     if (!await this.exists()) throw new Error(`Process "${this.identity}" no longer exists`)
-    const snapshot = processState(this.system, this)
-    if (snapshot.parent === null) return null
-    const parent = await this.system.process.find(snapshot.parent.identity)
-    if (!parent) throw new Error("The parent Process no longer exists")
-    return parent
+    const value = await representation(this.system).call<unknown>("/process/parent", {
+      identity: this.identity,
+      reference: processReference(this)
+    })
+    return value === null ? null : processHandle(this.system, processIdentityState(value))
   }
 
   public async option(name: string) { return processState(this.system, this).options[name] }

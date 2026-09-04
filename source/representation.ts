@@ -32,21 +32,18 @@ export interface WindowState {
   location: string
 }
 
-export interface ProcessState {
+export interface ProcessIdentityState {
   reference: string
   identity: string
   name: string | null
   program: string
-  parent: ProcessAddress | null
   options: Record<string, string>
   startedAt: Date
-  server: { ready: boolean, service: boolean } | null
-  client: { service: boolean, sameOrigin: boolean, window: WindowState } | null
 }
 
-export interface ProcessAddress {
-  reference: string
-  identity: string
+export interface ProcessState extends ProcessIdentityState {
+  server: { ready: boolean, service: boolean } | null
+  client: { service: boolean, sameOrigin: boolean, window: WindowState } | null
 }
 
 export type Observation =
@@ -345,27 +342,43 @@ function programState(value: unknown): ProgramState {
 }
 
 function processState(value: unknown): ProcessState {
-  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string" || typeof value.program !== "string" || !record(value.options)) {
+  const identity = processIdentityState(value)
+  const source = value as Record<string, unknown>
+
+  return {
+    ...identity,
+    server: record(source.server) ? { ready: source.server.ready === true, service: source.server.service === true } : null,
+    client: record(source.client) ? {
+      service: source.client.service === true,
+      sameOrigin: source.client.sameOrigin === true,
+      window: windowState(source.client.window)
+    } : null
+  }
+}
+
+/** Read the immutable facts needed to retain one Process handle. */
+export function processIdentityState(value: unknown): ProcessIdentityState {
+  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string" || !record(value.options)) {
     throw new Error("The System returned an invalid Process")
   }
 
+  const program = typeof value.program === "string"
+    ? value.program
+    : record(value.program) && typeof value.program.identity === "string"
+      ? value.program.identity
+      : null
   const startedAt = value.startedAt instanceof Date ? value.startedAt : new Date(String(value.startedAt))
+
+  if (program === null) throw new Error("The System returned an invalid Process owner")
   if (Number.isNaN(startedAt.getTime())) throw new Error("The System returned an invalid Process start time")
 
   return {
     reference: value.reference,
     identity: value.identity,
     name: typeof value.name === "string" ? value.name : null,
-    program: value.program,
-    parent: address(value.parent),
+    program,
     options: value.options as Record<string, string>,
-    startedAt,
-    server: record(value.server) ? { ready: value.server.ready === true, service: value.server.service === true } : null,
-    client: record(value.client) ? {
-      service: value.client.service === true,
-      sameOrigin: value.client.sameOrigin === true,
-      window: windowState(value.client.window)
-    } : null
+    startedAt
   }
 }
 
@@ -382,11 +395,6 @@ function windowState(value: unknown): WindowState {
     layer: value.layer as WindowLayer,
     location: value.location
   }
-}
-
-function address(value: unknown): ProcessAddress | null {
-  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string") return null
-  return { reference: value.reference, identity: value.identity }
 }
 
 function windowMessage(event: string, process: ProcessState) {
