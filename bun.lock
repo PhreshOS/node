@@ -5,7 +5,7 @@
     "": {
       "name": "@phreshos/node",
       "dependencies": {
-        "@phreshos/core": "^0.1.38",
+        "@phreshos/core": "^0.1.39",
         "@the-link/ipc": "^0.2.1",
         "@the-link/messagepack": "^0.1.0",
         "adm-zip": "^0.6.0",
@@ -21,7 +21,7 @@
   "packages": {
     "@msgpack/msgpack": ["@msgpack/msgpack@3.1.3", "", {}, "sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA=="],
 
-    "@phreshos/core": ["@phreshos/core@0.1.38", "", {}, "sha512-qEdGDLcSP0FyzBH9iDOdUsHgEtGnFfB1KKPTpuGHXEmKK8LIVYbBMc5EnjnhwPSTD2Z7fni1lGj5Y6rLrCxGhw=="],
+    "@phreshos/core": ["@phreshos/core@0.1.39", "", {}, "sha512-55f4qtb8aoXausgD+Kebq+xBCOhO3g+wdQlKmVb6YObWwiYxLWu+fJ+GIJzyNlRE6etD3EvXvbtsjMkrVTn28A=="],
 
     "@the-link/core": ["@the-link/core@0.3.1", "", { "dependencies": { "uuid": "^14.0.1" } }, "sha512-jH9mPLoXb+7pCxN7yGzo6TC4E1zb8HHrR5GidStEumM9NE+pIqolehXzdcCyPTJR4KIgZ4q64cjKs8QPruwWwA=="],
 

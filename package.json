@@ -1,6 +1,6 @@
 {
   "name": "@phreshos/node",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
@@ -36,7 +36,7 @@
     "prepack": "node --run build"
   },
   "dependencies": {
-    "@phreshos/core": "^0.1.38",
+    "@phreshos/core": "^0.1.39",
     "@the-link/ipc": "^0.2.1",
     "@the-link/messagepack": "^0.1.0",
     "adm-zip": "^0.6.0",
