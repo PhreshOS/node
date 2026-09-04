@@ -48,7 +48,7 @@ import Events from "./events.js"
 import HandleRegistry from "./handle-registry.js"
 import { resolveHome } from "./home.js"
 import { filesystemStorage, nativeStorage } from "./storage.js"
-import { processPermissions, programPermissions, programSql, programStore } from "./program-resources.js"
+import { programPermissions, programSql, programStore } from "./program-resources.js"
 import { EndpointTrafficHandle, ServerTrafficHandle } from "./traffic.js"
 import SystemRepresentation, {
   processIdentityState,
@@ -467,7 +467,6 @@ class ProcessHandle extends ProcessBase {
   public readonly startedAt: Date
   public readonly server: ServerEndpoint
   public readonly client: ClientEndpoint
-  public readonly permissions
 
   public constructor(private readonly system: System, snapshot: ProcessIdentityState) {
     super()
@@ -480,10 +479,6 @@ class ProcessHandle extends ProcessBase {
     this.startedAt = new Date(snapshot.startedAt)
     this.server = new ServerEndpointHandle(system, this)
     this.client = new ClientEndpointHandle(system, this)
-    this.permissions = processPermissions(
-      <Result = unknown>(event: string, ...values: unknown[]) => representation(system).call<Result>(event, ...values),
-      { identity: snapshot.identity, reference: snapshot.reference }
-    )
   }
 
   public program() {

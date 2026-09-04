@@ -35,11 +35,9 @@ program.permissions.set("all", true)
 program.permissions.delete("all")
 
 declare const process: import("../source/main.js").Process
-process.permissions.get("all")
-process.permissions.all()
-process.permissions.allows("network", ["https://api.example.com"])
-process.permissions.set("network", ["https://api.example.com"])
-process.permissions.delete("network")
+
+// @ts-expect-error Permissions belong to the Program, never one Process.
+process.permissions
 
 // @ts-expect-error Permission names are closed by the Core catalog.
 program.permissions.get("files")

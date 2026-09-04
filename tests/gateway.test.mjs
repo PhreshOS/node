@@ -221,7 +221,6 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
   const address = gatewayAddress(home)
   const calls = []
   const commands = new Map()
-  const temporaryPermissions = {}
   const program = {
     reference: "program-reference",
     identity: "example",
@@ -289,17 +288,6 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
         return []
       }
 
-      if (event === "/auth/process/permissions") {
-        const operation = input[1]
-        const name = input[2]
-        if (operation === "all") return { ...temporaryPermissions }
-        if (operation === "get") return temporaryPermissions[name] ?? null
-        if (operation === "allows") return Array.isArray(temporaryPermissions.all) || Array.isArray(temporaryPermissions[name])
-        if (operation === "set") temporaryPermissions[name] = input[3] === true ? [] : input[3]
-        if (operation === "delete") delete temporaryPermissions[name]
-        return
-      }
-
       if (event === "/auth/program/command") {
         const [stream, operation] = input
         assert.equal(operation, "run")
@@ -360,13 +348,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert(started.value.process.server instanceof ServerEndpoint)
     assert(started.value.process.server instanceof Endpoint)
     assert(started.value.process.client instanceof ClientEndpoint)
-    assert.deepEqual(await started.value.process.permissions.all(), {})
-    assert.equal(await started.value.process.permissions.allows("network", ["https://api.example.com"]), false)
-    await started.value.process.permissions.set("network", ["https://api.example.com"])
-    assert.deepEqual(await started.value.process.permissions.get("network"), ["https://api.example.com"])
-    assert.equal(await started.value.process.permissions.allows("network", ["https://api.example.com"]), true)
-    await started.value.process.permissions.delete("network")
-    assert.equal(await started.value.process.permissions.get("network"), null)
+    assert.equal("permissions" in started.value.process, false)
     assert(started.value.process.client instanceof Endpoint)
     assert.equal(await processCreated, started.value.process)
     assert.equal(await system.process.find(processRecord.identity), started.value.process)

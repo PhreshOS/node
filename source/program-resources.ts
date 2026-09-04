@@ -1,10 +1,8 @@
 import {
   parsePermission,
   parsePermissions,
-  type PermissionAssignments,
   type PermissionInput,
   type PermissionName,
-  type ProcessPermissions,
   type ProgramPermissions,
   type ProgramSql,
   type ProgramStore
@@ -40,17 +38,8 @@ export function programSql(call: Call, handle: HandleAddress, database: "databas
 
 /** Program permission management carried through the owner-local Gateway. */
 export function programPermissions(call: Call, handle: HandleAddress): ProgramPermissions {
-  return assignedPermissions(call, "/program/permissions", handle)
-}
-
-/** Process permission management carried through the owner-local Gateway. */
-export function processPermissions(call: Call, handle: HandleAddress): ProcessPermissions {
-  return assignedPermissions(call, "/process/permissions", handle)
-}
-
-function assignedPermissions(call: Call, event: "/program/permissions" | "/process/permissions", handle: HandleAddress): PermissionAssignments {
   const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "set" | "delete", name?: Name, permission?: PermissionInput<Name>) => (
-    call(event, handle, permissionOperation, name, permission)
+    call("/program/permissions", handle, permissionOperation, name, permission)
   )
 
   return {
