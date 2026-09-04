@@ -30,8 +30,16 @@ const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof Sy
 
 program.permissions.get("all")
 program.permissions.all()
+program.permissions.allows("network", ["https://api.example.com"])
 program.permissions.set("all", true)
 program.permissions.delete("all")
+
+declare const process: import("../source/main.js").Process
+process.permissions.get("all")
+process.permissions.all()
+process.permissions.allows("network", ["https://api.example.com"])
+process.permissions.set("network", ["https://api.example.com"])
+process.permissions.delete("network")
 
 // @ts-expect-error Permission names are closed by the Core catalog.
 program.permissions.get("files")
