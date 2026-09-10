@@ -1,29 +1,30 @@
 import type {
-  ClientEndpoint as CoreClientEndpoint,
-  Endpoint as CoreEndpoint,
-  Program as CoreProgram,
-  ServerEndpoint as CoreServerEndpoint,
+  ClientEndpoint,
+  Endpoint,
+  Process,
+  Program,
+  ServerEndpoint,
   System as CoreSystem,
   Service,
   ServiceKey
 } from "@phreshos/core"
-import type { ClientEndpoint, Endpoint, Program, ServerEndpoint, System } from "../source/main.js"
+import type { System } from "../source/main.js"
 
 declare const connected: System
 declare const canonical: CoreSystem
 declare const program: Program
-declare const canonicalProgram: CoreProgram
+declare const canonicalProgram: Program
 declare const endpoint: Endpoint<{ change: number }, string>
 declare const server: ServerEndpoint<{ change: number }, string>
 declare const client: ClientEndpoint<{ change: number }, string>
 declare const serviceEndpoint: ServiceKey["endpoint"]
 
 const shared: CoreSystem = connected
-const sameProgram: CoreProgram = program
+const sameProgram: Program = program
 const nodeProgram: Program = canonicalProgram
-const sameEndpoint: CoreEndpoint<{ change: number }, string> = endpoint
-const sameServer: CoreServerEndpoint<{ change: number }, string> = server
-const sameClient: CoreClientEndpoint<{ change: number }, string> = client
+const sameEndpoint: Endpoint<{ change: number }, string> = endpoint
+const sameServer: ServerEndpoint<{ change: number }, string> = server
+const sameClient: ClientEndpoint<{ change: number }, string> = client
 const service: Service = connected.service({ program: "example", process: "main", endpoint: serviceEndpoint })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
@@ -34,7 +35,7 @@ program.permissions.allows("network", ["https://api.example.com"])
 program.permissions.set("all", true)
 program.permissions.delete("all")
 
-declare const process: import("../source/main.js").Process
+declare const process: Process
 
 // @ts-expect-error Permissions belong to the Program, never one Process.
 process.permissions

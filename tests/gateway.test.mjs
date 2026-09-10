@@ -4,7 +4,8 @@ import { createServer as createHttpServer } from "node:http"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
-import { ClientEndpoint, ClientService, Endpoint, Process, Program, Project, ServerEndpoint, ServerService, Service, System, gatewayAddress, resolveHome } from "../dist/main.js"
+import { ClientEndpoint, ClientService, Endpoint, Process, Program, ServerEndpoint, ServerService, Service } from "@phreshos/core"
+import { Project, System, gatewayAddress, resolveHome } from "../dist/main.js"
 import { createGateway } from "./gateway-fixture.mjs"
 
 test("Project.open discovers phresh.config.ts from cwd by default", async () => {

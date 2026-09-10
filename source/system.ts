@@ -1,7 +1,6 @@
 import {
   ClientEndpoint as CoreClientEndpoint,
   ClientService as CoreClientService,
-  Endpoint as CoreEndpoint,
   Process as CoreProcess,
   Program as CoreProgram,
   ServerEndpoint as CoreServerEndpoint,
@@ -62,8 +61,8 @@ import Uploads from "./uploads.js"
 import shell from "./shell.js"
 import websocket from "./websocket.js"
 
-export type ProgramProcessRunOptions = CoreProgramProcessRunOptions
-export type ProgramProcessRunEvent = CoreProgramProcessRunEvent
+type ProgramProcessRunOptions = CoreProgramProcessRunOptions
+type ProgramProcessRunEvent = CoreProgramProcessRunEvent
 
 type ServiceEndpoint = ServiceKey["endpoint"]
 
@@ -72,8 +71,8 @@ type ServiceAddress<Endpoint extends ServiceEndpoint> = Omit<ServiceKey, "endpoi
 }>
 
 type ServiceHandle<Endpoint extends ServiceEndpoint, EventsMap extends object, Fallback = unknown> = Endpoint extends "server"
-  ? ServerService<EventsMap, Fallback>
-  : ClientService<EventsMap, Fallback>
+  ? CoreServerService<EventsMap, Fallback>
+  : CoreClientService<EventsMap, Fallback>
 
 interface SystemState {
   readonly connection: GatewayConnection
@@ -135,7 +134,7 @@ export class System implements CoreSystem {
   }
 
   /** Atomically replace one runtime Program without touching its installed form. */
-  public async forceCreateProgram(source: ProgramDefinition | string): Promise<Program> {
+  public async forceCreateProgram(source: ProgramDefinition | string): Promise<CoreProgram> {
     requireConnected(this)
     const identity = await representation(this).call<string>("/program/force-create-program", source, "")
     return programHandle(this, required(representation(this).programs.get(identity), identity))
@@ -147,8 +146,8 @@ export class System implements CoreSystem {
   }
 
   public service<Endpoint extends ServiceEndpoint>(key: ServiceAddress<Endpoint>): ServiceHandle<Endpoint, {}>
-  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"server">): ServerService<EventsMap, Fallback>
-  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"client">): ClientService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"server">): CoreServerService<EventsMap, Fallback>
+  public service<EventsMap extends object = {}, Fallback = unknown>(key: ServiceAddress<"client">): CoreClientService<EventsMap, Fallback>
   public service(key: ServiceKey): unknown {
     requireConnected(this)
     if (!isServiceKey(key)) throw new Error("A complete service key is required")
@@ -680,12 +679,7 @@ class ServiceBase {
   }
 }
 
-/** Node SDK handle for a Service provided by a Server Endpoint. */
-export class ServerService<EventsMap extends object = {}, Fallback = unknown> extends CoreServerService<EventsMap, Fallback> {
-  protected constructor() { super() }
-}
-
-class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends ServerService<EventsMap, Fallback> {
+class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends CoreServerService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
@@ -711,12 +705,7 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   }
 }
 
-/** Node SDK handle for a Service provided by a Client Endpoint. */
-export class ClientService<EventsMap extends object = {}, Fallback = unknown> extends CoreClientService<EventsMap, Fallback> {
-  protected constructor() { super() }
-}
-
-class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends ClientService<EventsMap, Fallback> {
+class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends CoreClientService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
   private readonly base: ServiceBase
 
@@ -877,17 +866,7 @@ function required<Value>(value: Value | undefined, identity = ""): Value {
 
 interface EndpointReference { kind: "server" | "client", process: { identity: string } }
 
-export type Program = CoreProgram
-export const Program = CoreProgram
-
-export type Process = CoreProcess
-export const Process = CoreProcess
-
-export type Endpoint<EventsMap extends object = {}, Fallback = unknown> = CoreEndpoint<EventsMap, Fallback>
-export const Endpoint = CoreEndpoint
-
-export type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreServerEndpoint<EventsMap, Fallback>
-export const ServerEndpoint = CoreServerEndpoint
-
-export type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>
-export const ClientEndpoint = CoreClientEndpoint
+type Program = CoreProgram
+type Process = CoreProcess
+type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreServerEndpoint<EventsMap, Fallback>
+type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>

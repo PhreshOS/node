@@ -5,16 +5,19 @@
     "": {
       "name": "@phreshos/node",
       "dependencies": {
-        "@phreshos/core": "^0.1.41",
         "@the-link/ipc": "^0.2.1",
         "@the-link/messagepack": "^0.1.0",
         "adm-zip": "^0.6.0",
         "jiti": "^2.7.0",
       },
       "devDependencies": {
+        "@phreshos/core": "^0.1.41",
         "@types/adm-zip": "^0.5.8",
         "@types/node": "^26.2.0",
         "typescript": "^6.0.3",
+      },
+      "peerDependencies": {
+        "@phreshos/core": "^0.1.41",
       },
     },
   },

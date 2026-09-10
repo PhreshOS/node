@@ -27,6 +27,9 @@ cross the connection boundary.
 | Bun | `bun add @phreshos/node` |
 | Yarn | `yarn add @phreshos/node` |
 
+`@phreshos/core` is a peer dependency and the single import path for shared
+System and runtime contracts.
+
 ```ts
 import { Project, System } from "@phreshos/node"
 
@@ -50,8 +53,8 @@ bun install --frozen-lockfile
 bun run verify
 ```
 
-`verify` checks the types, builds the package, and runs the connection and
-Project tests.
+`verify` checks the types, builds the package, runs the connection and Project
+tests, and validates the published package shape independently.
 
 ## Related repositories
 
