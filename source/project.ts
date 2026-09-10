@@ -166,7 +166,7 @@ export class Project {
 
   private async prepareDevelopment(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
     const client = await DevelopmentClient.prepare(development, this.directory)
-    const program = await system.forceCreateProgram(this.definition("development", client.url))
+    const program = await system.program.forceCreate(this.definition("development", client.url))
 
     try {
       await client.start(program.assetId, options.signal)
@@ -182,7 +182,7 @@ export class Project {
   /** Build this Project and return its Program installation generator. */
   public async install(system: SystemContract) {
     await this.build()
-    const program = await system.forceCreateProgram(this.productionDefinition())
+    const program = await system.program.forceCreate(this.productionDefinition())
     return program.install()
   }
 
@@ -220,7 +220,7 @@ export class Project {
   }
 
   private async run(system: SystemContract, definition: ProgramDefinition, options: ProjectRunOptions) {
-    const program = await system.forceCreateProgram(definition)
+    const program = await system.program.forceCreate(definition)
     return program.process.run({ options: options.options ?? {} }, { signal: options.signal })
   }
 }

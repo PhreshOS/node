@@ -30,14 +30,16 @@ test("a Client development command receives its assigned address", async context
   const process = { identity: "development-process" }
   const assetId = "00000000-0000-4000-8000-000000000000"
   const system = {
-    async forceCreateProgram(value) {
-      definition = value
-      return {
-        assetId,
-        process: {
-          async *run() {
-            yield { event: "started", process }
-            yield { event: "exited", process, exit: { status: "exited", code: 0, signal: null } }
+    program: {
+      async forceCreate(value) {
+        definition = value
+        return {
+          assetId,
+          process: {
+            async *run() {
+              yield { event: "started", process }
+              yield { event: "exited", process, exit: { status: "exited", code: 0, signal: null } }
+            }
           }
         }
       }

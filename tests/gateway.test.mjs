@@ -77,13 +77,15 @@ test("Project returns the original production Process generator without consumin
     yield { event: "started", process: { identity: "process-identity" } }
   })()
   const system = {
-    async forceCreateProgram(definition) {
-      calls.push({ operation: "forceCreateProgram", definition })
-      return {
-        process: {
-          run(launch, options) {
-            calls.push({ operation: "run", launch, signal: options.signal })
-            return lifecycle
+    program: {
+      async forceCreate(definition) {
+        calls.push({ operation: "forceCreate", definition })
+        return {
+          process: {
+            run(launch, options) {
+              calls.push({ operation: "run", launch, signal: options.signal })
+              return lifecycle
+            }
           }
         }
       }
@@ -94,7 +96,7 @@ test("Project returns the original production Process generator without consumin
   const result = await project.start(system, { options: { mode: "test" }, signal })
 
   assert.equal(result, lifecycle)
-  assert.equal(calls[0].operation, "forceCreateProgram")
+  assert.equal(calls[0].operation, "forceCreate")
   assert.equal(calls[0].definition.client.location, join(directory, "client"))
   assert.deepEqual(calls[1].launch, { options: { mode: "test" } })
   assert.equal(calls[1].signal, signal)
@@ -121,12 +123,14 @@ test("Project returns the original development and installation generators", asy
   const installation = (async function* () {})()
   const definitions = []
   const system = {
-    async forceCreateProgram(definition) {
-      definitions.push(definition)
-      return {
-        assetId: "00000000-0000-4000-8000-000000000000",
-        process: { run: () => development },
-        install: () => installation
+    program: {
+      async forceCreate(definition) {
+        definitions.push(definition)
+        return {
+          assetId: "00000000-0000-4000-8000-000000000000",
+          process: { run: () => development },
+          install: () => installation
+        }
       }
     }
   }
@@ -321,7 +325,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
   const system = await System.connect(home)
   try {
     const createdEvent = system.program.waitFor("create")
-    const created = await system.forceCreateProgram({
+    const created = await system.program.forceCreate({
       identity: "example",
       storage: join(home, "storage"),
       server: { location: join(home, "server"), entryFile: "main.js" }
@@ -363,7 +367,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(run.next(), /cancelled by test/)
 
-    const replaced = await system.forceCreateProgram({
+    const replaced = await system.program.forceCreate({
       identity: "example",
       storage: join(home, "storage"),
       server: { location: join(home, "server"), entryFile: "main.js" }

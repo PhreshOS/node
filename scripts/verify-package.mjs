@@ -69,6 +69,9 @@ import { Endpoint } from "@phreshos/node"
 declare const connected: System
 const shared: SystemContract = connected
 const programs: Promise<Program[]> = connected.program.list()
+const forcedProgram: Promise<Program> = connected.program.forceCreate("./phresh.config.ts")
+// @ts-expect-error Program creation belongs to the Program capability
+connected.forceCreateProgram("./phresh.config.ts")
 const processes: Promise<Process[]> = connected.process.list()
 const opening: Promise<Project> = Project.open()
 const address: string = gatewayAddress(resolveHome())
@@ -80,6 +83,7 @@ let runOptions: ProjectRunOptions = {}
 
 void shared
 void programs
+void forcedProgram
 void processes
 void opening
 void address

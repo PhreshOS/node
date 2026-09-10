@@ -133,13 +133,6 @@ export class System implements CoreSystem {
     return new System(await openConnection(address))
   }
 
-  /** Atomically replace one runtime Program without touching its installed form. */
-  public async forceCreateProgram(source: ProgramDefinition | string): Promise<CoreProgram> {
-    requireConnected(this)
-    const identity = await representation(this).call<string>("/program/force-create-program", source, "")
-    return programHandle(this, required(representation(this).programs.get(identity), identity))
-  }
-
   /** Close this owner connection and abort every attached operation it owns. */
   public async disconnect() {
     await closeSystem(this, new Error("This System connection is closed"))
@@ -242,6 +235,12 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
 
   public async create(source: ProgramDefinition | string) {
     const identity = await representation(this.system).call<string>("/program/create-program", source)
+    return programHandle(this.system, required(representation(this.system).programs.get(identity), identity))
+  }
+
+  public async forceCreate(source: ProgramDefinition | string): Promise<CoreProgram> {
+    requireConnected(this.system)
+    const identity = await representation(this.system).call<string>("/program/force-create-program", source, "")
     return programHandle(this.system, required(representation(this.system).programs.get(identity), identity))
   }
 
