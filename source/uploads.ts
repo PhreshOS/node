@@ -1,4 +1,4 @@
-import { isUploadFile, type SystemUploads, type Upload } from "@phreshos/core"
+import { isUploadFile, type FileStat, type SystemUploads, type Upload, type WritableContent } from "@phreshos/core"
 import { randomUUID } from "node:crypto"
 import { createReadStream, createWriteStream, mkdirSync } from "node:fs"
 import { rename, rm } from "node:fs/promises"
@@ -6,6 +6,7 @@ import { isAbsolute, join } from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import type { ReadableStream as NodeReadableStream } from "node:stream/web"
+import { content } from "./content.js"
 
 type Ask = (request: object) => Promise<unknown>
 
@@ -19,7 +20,7 @@ export default class Uploads implements SystemUploads {
     return (await this.access()).path
   }
 
-  public async write(value: unknown): Promise<Upload> {
+  public async write(value: WritableContent): Promise<Upload> {
     const signal = this.active()
     const access = await this.access()
     const source = content(value)
@@ -53,7 +54,7 @@ export default class Uploads implements SystemUploads {
 
     const upload = await this.stat(file)
     if (!upload) throw new Error("The completed upload could not be described")
-    return upload
+    return { file, ...upload }
   }
 
   public async stream(file: string) {
@@ -70,7 +71,7 @@ export default class Uploads implements SystemUploads {
   public async stat(file: string) {
     this.active()
     requireFile(file)
-    return await this.ask({ capability: "uploads", operation: "stat", file }) as Upload | null
+    return await this.ask({ capability: "uploads", operation: "stat", file }) as FileStat | null
   }
 
   private access() {
@@ -99,37 +100,6 @@ export default class Uploads implements SystemUploads {
 
 function requireFile(file: string) {
   if (!isUploadFile(file)) throw new Error("That is not an upload file")
-}
-
-function content(value: unknown) {
-  if (typeof File !== "undefined" && value instanceof File) {
-    const type = value.type || "application/octet-stream"
-    return { stream: value.stream(), extension: extension(value.name, type) }
-  }
-  if (typeof Blob !== "undefined" && value instanceof Blob) return { stream: value.stream(), extension: extension("", value.type) }
-  if (value instanceof ReadableStream) return { stream: value, extension: "bin" }
-  if (value instanceof Uint8Array) return { stream: new Blob([bytes(value)]).stream(), extension: "bin" }
-  if (value instanceof ArrayBuffer) return { stream: new Blob([value]).stream(), extension: "bin" }
-  if (typeof value === "string") return { stream: new Blob([value]).stream(), extension: "txt" }
-  return { stream: new Blob([JSON.stringify(value)]).stream(), extension: "json" }
-}
-
-function bytes(value: Uint8Array) {
-  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer
-}
-
-function extension(name: string, type: string) {
-  const named = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase()
-  if (named && /^[a-z0-9]+$/.test(named)) return named
-  return extensions[type] ?? "bin"
-}
-
-const extensions: Readonly<Record<string, string>> = {
-  "application/json": "json",
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/svg+xml": "svg",
-  "text/plain": "txt"
 }
 
 interface Access { path: string, limit: number }

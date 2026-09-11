@@ -189,7 +189,7 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal("programHandle" in system, false)
     assert.equal("processHandle" in system, false)
     assert.equal(await system.storage.path(), userHome)
-    assert.equal(await system.storage.resolve(".."), dirname(userHome))
+    assert.equal(await system.storage.navigate("..").path(), dirname(userHome))
     assert.equal(await system.uploads.path(), join(home, "uploads"))
     assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
 

@@ -62,7 +62,7 @@ assert.deepEqual(Object.keys(sdk).sort(), ["Project", "System", "gatewayAddress"
   execFileSync(process.execPath, [join(consumer, "runtime.mjs")], { cwd: consumer, stdio: "inherit" })
 
   writeFileSync(join(consumer, "consumer.ts"), `import { Project, System, gatewayAddress, resolveHome, type Manifest, type PackedProject, type ProjectMode, type ProjectOptions, type ProjectRunOptions } from "@phreshos/node"
-import { Program, type Process, type System as SystemContract } from "@phreshos/core"
+import { Program, type Process, type Storage, type StorageFile, type System as SystemContract } from "@phreshos/core"
 // @ts-expect-error shared domains are imported from Core, not republished by an environment SDK
 import { Endpoint } from "@phreshos/node"
 
@@ -73,6 +73,9 @@ const forcedProgram: Promise<Program> = connected.program.forceCreate("./phresh.
 // @ts-expect-error Program creation belongs to the Program capability
 connected.forceCreateProgram("./phresh.config.ts")
 const processes: Promise<Process[]> = connected.process.list()
+const storage: Storage = connected.storage.navigate("Documents")
+const storageFile: StorageFile = storage.file("example.txt")
+const storageText: Promise<string> = storageFile.text()
 const opening: Promise<Project> = Project.open()
 const address: string = gatewayAddress(resolveHome())
 let manifest: Manifest | undefined
