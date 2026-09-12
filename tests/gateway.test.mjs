@@ -324,7 +324,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
 
   const system = await System.connect(home)
   try {
-    const createdEvent = system.program.waitFor("create")
+    const createdEvent = system.program.wait("create")
     const created = await system.program.forceCreate({
       identity: "example",
       storage: join(home, "storage"),
@@ -344,7 +344,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await created.agent(), "Program agent")
 
     const controller = new AbortController()
-    const processCreated = system.process.waitFor("create")
+    const processCreated = system.process.wait("create")
     const run = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
     const started = await run.next()
 
@@ -358,7 +358,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await processCreated, started.value.process)
     assert.equal(await system.process.find(processRecord.identity), started.value.process)
     assert.equal((await created.process.list())[0], started.value.process)
-    assert.equal(await started.value.process.option("mode"), "test")
+    assert.equal(await started.value.process.options("mode"), "test")
     const retainedParent = await started.value.process.parent()
     assert(retainedParent instanceof Process)
     assert.equal(retainedParent.identity, parentRecord.identity)

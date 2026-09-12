@@ -493,7 +493,12 @@ class ProcessHandle extends ProcessBase {
     return value === null ? null : processHandle(this.system, processIdentityState(value))
   }
 
-  public async option(name: string) { return processState(this.system, this).options[name] }
+  public async options<Options extends object = Readonly<Record<string, string>>>(): Promise<Readonly<Options>>
+  public async options<Option extends string = string>(name: string): Promise<Option | undefined>
+  public async options(name?: string) {
+    const options = processState(this.system, this).options
+    return name === undefined ? Object.freeze({ ...options }) : options[name]
+  }
 
   public async exit() {
     await representation(this.system).call("/process/exit", this.identity)
@@ -639,7 +644,6 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async minimized() { return (await this.snapshot()).minimized }
   public async front() { return frontWindow(this.system, this.process) }
   public async layer() { return (await this.snapshot()).layer }
-  public async location() { return (await this.snapshot()).location }
   public async move(position: Position) { await this.change("move", position) }
   public async resize(size: Size) { await this.change("resize", size) }
   public async setGeometry(geometry: WindowGeometry) { await this.change("geometry", geometry) }
@@ -769,7 +773,7 @@ function bindEvents<Definitions extends object, Fallback>(target: object, events
 function eventsOf<Definitions extends object, Fallback>(events: Events<Definitions, Fallback>) {
   return {
     subscribe: events.subscribe,
-    waitFor: events.waitFor,
+    wait: events.wait,
     events: events.events
   }
 }

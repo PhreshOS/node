@@ -29,7 +29,6 @@ export interface WindowState {
   depth: number
   minimized: boolean
   layer: WindowLayer
-  location: string
 }
 
 export interface ProcessIdentityState {
@@ -383,7 +382,7 @@ export function processIdentityState(value: unknown): ProcessIdentityState {
 }
 
 function windowState(value: unknown): WindowState {
-  if (!record(value) || typeof value.title !== "string" || typeof value.location !== "string" || typeof value.depth !== "number" || typeof value.minimized !== "boolean") {
+  if (!record(value) || typeof value.title !== "string" || typeof value.depth !== "number" || typeof value.minimized !== "boolean") {
     throw new Error("The System returned an invalid Window")
   }
   return {
@@ -392,8 +391,7 @@ function windowState(value: unknown): WindowState {
     size: value.size as WindowState["size"],
     depth: value.depth,
     minimized: value.minimized,
-    layer: value.layer as WindowLayer,
-    location: value.location
+    layer: value.layer as WindowLayer
   }
 }
 

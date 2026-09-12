@@ -25,7 +25,7 @@ export default class Events<Definitions extends object, Fallback = never> {
     })
   }) as Subscribable<Definitions, Fallback>["subscribe"]
 
-  public readonly waitFor = ((event: string, timeout = 10_000) => new Promise((resolve, reject) => {
+  public readonly wait = ((event: string, timeout = 10_000) => new Promise((resolve, reject) => {
     let stop: Cleanup = () => undefined
     const timer = setTimeout(() => {
       stop()
@@ -37,7 +37,7 @@ export default class Events<Definitions extends object, Fallback = never> {
       work()
     }
     stop = this.listen(event, message => finish(() => resolve(message)), error => finish(() => reject(error)))
-  })) as Subscribable<Definitions, Fallback>["waitFor"]
+  })) as Subscribable<Definitions, Fallback>["wait"]
 
   public readonly events = ((eventOrOptions: string | EventOptions = {}, namedOptions: EventOptions = {}) => {
     if (typeof eventOrOptions === "string") {
