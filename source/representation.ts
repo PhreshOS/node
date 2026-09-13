@@ -1,42 +1,26 @@
 import { randomUUID } from "node:crypto"
-import type {
-  Appearance,
-  ClientDeclaration,
-  EndpointDeclaration,
-  ServiceKey,
-  WindowGeometry,
-  WindowLayer
+import {
+  parseProgramSnapshot,
+  parseAppearance,
+  type Appearance,
+  type ProcessSnapshot,
+  type ProgramSnapshot,
+  type ServiceKey,
+  type WindowLayer,
+  type WindowState as CoreWindowState
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
-export interface ProgramState {
-  reference: string
-  identity: string
-  assetId: string
-  installed: boolean
-  name: string
-  version: string | null
-  description: string | null
-  hasAgent: boolean
-  server: EndpointDeclaration | null
-  client: ClientDeclaration | null
-}
+export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean }>
 
-export interface WindowState {
-  title: string
-  position: WindowGeometry["position"]
-  size: WindowGeometry["size"]
-  depth: number
-  minimized: boolean
-  layer: WindowLayer
-}
+export type WindowState = Omit<CoreWindowState, "front"> & Readonly<{ depth: number }>
 
 export interface ProcessIdentityState {
   reference: string
   identity: string
   name: string | null
   program: string
-  options: Record<string, string>
+  options: ProcessSnapshot["options"]
   startedAt: Date
 }
 
@@ -73,7 +57,7 @@ export default class SystemRepresentation {
     const session = ownerSession(connection.session)
 
     this.authorization = session.authorization
-    this.appearance = session.linkManager.appearance.value
+    this.appearance = parseAppearance(session.linkManager.appearance.value)
 
     for (const [, value] of session.authManager.programManager.programs) {
       const program = programState(value)
@@ -197,7 +181,7 @@ export default class SystemRepresentation {
     const subscribe = (event: string, listener: Listener) => this.release.push(this.connection.subscribe(event, listener))
 
     subscribe(`property-update:${appearance}`, value => {
-      this.appearance = value as Appearance
+      this.appearance = parseAppearance(value)
       this.emit("appearance", this.appearance)
     })
 
@@ -215,7 +199,7 @@ export default class SystemRepresentation {
     subscribe("/auth/process/client-access", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/exited", (value, code, signal) => this.exitProcess(value, code, signal))
 
-    for (const event of ["move", "resize", "geometry", "change-title", "raise", "minimize"] as const) {
+    for (const event of ["move", "resize", "geometry", "change-title", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -313,7 +297,7 @@ function ownerSession(value: unknown) {
 
   return {
     authorization: value.authorization,
-    linkManager: { appearance: { key: linkManager.appearance.key, value: linkManager.appearance.value as Appearance } },
+    linkManager: { appearance: { key: linkManager.appearance.key, value: linkManager.appearance.value } },
     authManager: {
       programManager: { programs: programs as [string, unknown][] },
       processManager: { processes: processes as [string, unknown][] }
@@ -322,22 +306,11 @@ function ownerSession(value: unknown) {
 }
 
 function programState(value: unknown): ProgramState {
-  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string" || typeof value.assetId !== "string" || typeof value.name !== "string") {
-    throw new Error("The System returned an invalid Program")
-  }
+  const parsed = parseProgramSnapshot(value)
+  if (parsed.installed === undefined) throw new Error("The System returned a Program without installation state")
 
-  return {
-    reference: value.reference,
-    identity: value.identity,
-    assetId: value.assetId,
-    installed: value.installed === true,
-    name: value.name,
-    version: typeof value.version === "string" ? value.version : null,
-    description: typeof value.description === "string" ? value.description : null,
-    hasAgent: value.hasAgent === true,
-    server: value.server as EndpointDeclaration | null,
-    client: value.client as ClientDeclaration | null
-  }
+  return { ...parsed, installed: parsed.installed }
+
 }
 
 function processState(value: unknown): ProcessState {
@@ -382,7 +355,7 @@ export function processIdentityState(value: unknown): ProcessIdentityState {
 }
 
 function windowState(value: unknown): WindowState {
-  if (!record(value) || typeof value.title !== "string" || typeof value.depth !== "number" || typeof value.minimized !== "boolean") {
+  if (!record(value) || typeof value.title !== "string" || typeof value.depth !== "number" || typeof value.minimized !== "boolean" || typeof value.maximized !== "boolean") {
     throw new Error("The System returned an invalid Window")
   }
   return {
@@ -391,6 +364,7 @@ function windowState(value: unknown): WindowState {
     size: value.size as WindowState["size"],
     depth: value.depth,
     minimized: value.minimized,
+    maximized: value.maximized,
     layer: value.layer as WindowLayer
   }
 }
@@ -402,6 +376,7 @@ function windowMessage(event: string, process: ProcessState) {
   if (event === "geometry") return { position: window.position, size: window.size }
   if (event === "change-title") return window.title
   if (event === "minimize") return window.minimized
+  if (event === "maximize") return window.maximized
   return true
 }
 

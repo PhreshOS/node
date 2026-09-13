@@ -4,7 +4,7 @@ import { createServer as createHttpServer } from "node:http"
 import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
-import { ClientEndpoint, ClientService, Endpoint, Process, Program, ServerEndpoint, ServerService, Service } from "@phreshos/core"
+import { ClientEndpoint, ClientService, Endpoint, Process, Program, ServerEndpoint, ServerService, Service, defaultAppearance } from "@phreshos/core"
 import { Project, System, gatewayAddress, resolveHome } from "../dist/main.js"
 import { createGateway } from "./gateway-fixture.mjs"
 
@@ -165,7 +165,7 @@ test("System.connect exposes the shared System contract over one owner-local add
   const server = createGateway(address, {
     session: {
       authorization: "owner",
-      linkManager: { appearance: { key: "appearance", value: { background: { light: "#fff" } } } },
+      linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [] },
         processManager: { processes: [] }
@@ -191,7 +191,7 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(await system.storage.path(), userHome)
     assert.equal(await system.storage.navigate("..").path(), dirname(userHome))
     assert.equal(await system.uploads.path(), join(home, "uploads"))
-    assert.deepEqual(await system.appearance.snapshot(), { background: { light: "#fff" } })
+    assert.deepEqual(await system.appearance.snapshot(), defaultAppearance)
 
     const serverService = system.service({ program: "example", process: "main", endpoint: "server" })
     const sameServerService = system.service({ program: "example", process: "main", endpoint: "server" })
@@ -265,7 +265,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
   const server = createGateway(address, {
     session: {
       authorization: "owner",
-      linkManager: { appearance: { key: "appearance", value: {} } },
+      linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [[program.identity, program]] },
         processManager: { processes: [[parentRecord.identity, parentRecord]] }
@@ -416,7 +416,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
   const server = createGateway(address, {
     session: {
       authorization: "owner",
-      linkManager: { appearance: { key: "appearance", value: {} } },
+      linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [[program.identity, program]] },
         processManager: { processes: [[processRecord.identity, processRecord]] }

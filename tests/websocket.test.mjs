@@ -8,7 +8,7 @@ import test from "node:test"
 import { System, gatewayAddress } from "../dist/main.js"
 import { createGateway } from "./gateway-fixture.mjs"
 
-test("System.websocket returns a native socket owned by its System connection", async () => {
+test("System.network.websocket returns a native socket owned by its System connection", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-websocket-"))
   const address = gatewayAddress(home)
   let ownerConnection
@@ -52,7 +52,7 @@ test("System.websocket returns a native socket owned by its System connection", 
     const listening = websocketServer.address()
     assert.equal(typeof listening, "object")
 
-    const socket = await system.websocket(`ws://127.0.0.1:${listening.port}`)
+    const socket = await system.network.websocket(`ws://127.0.0.1:${listening.port}`)
     assert(socket instanceof WebSocket)
     await opened(socket)
     assert.equal(socket.readyState, WebSocket.OPEN)

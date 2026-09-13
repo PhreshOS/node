@@ -13,7 +13,7 @@ import Events, { stream } from "./events.js"
 import type SystemRepresentation from "./representation.js"
 
 type Kind = "publish" | "ask" | "answer"
-type ResolveEndpoint = (value: unknown) => Endpoint
+type ResolveEndpoint = (value: unknown) => Endpoint | null
 
 /** Directed traffic originating from one canonical Endpoint. */
 export class EndpointTrafficHandle<Definitions extends object = {}> extends Events<

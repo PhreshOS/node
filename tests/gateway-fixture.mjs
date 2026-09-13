@@ -1,9 +1,10 @@
 import { SocketServer } from "@the-link/ipc/socket-server"
 import messagepack from "@the-link/messagepack"
+import { defaultAppearance } from "@phreshos/core"
 
 const emptySession = {
   authorization: "owner",
-  linkManager: { appearance: { key: "appearance", value: {} } },
+  linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
   authManager: {
     programManager: { programs: [] },
     processManager: { processes: [] }

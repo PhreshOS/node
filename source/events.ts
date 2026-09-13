@@ -1,11 +1,13 @@
-import type { Capture, Cleanup, EventOptions, Subscribable } from "@phreshos/core"
+import { subscribableDefinition, type Capture, type Cleanup, type EventOptions, type Subscribable, type SubscribableDefinition } from "@phreshos/core"
 
 type Failure = (error: Error) => void
 type Register<Message> = (subscriber: (message: Message) => unknown, impossible?: Failure) => Cleanup
 type Subscribe = (event: string | null, subscriber: (message: unknown) => unknown, impossible?: Failure) => Cleanup
 
 /** Adapts one live representation source into the shared Subscribable contract. */
-export default class Events<Definitions extends object, Fallback = never> {
+export default class Events<Definitions extends object, Fallback = never> implements Subscribable<Definitions, Fallback> {
+  public declare readonly [subscribableDefinition]?: SubscribableDefinition<Definitions, Fallback>
+
   public constructor(private readonly names: readonly string[], private readonly register: Subscribe) {}
 
   public readonly subscribe = ((

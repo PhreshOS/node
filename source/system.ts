@@ -6,7 +6,7 @@ import {
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   isServiceKey,
-  parseClientPermissions,
+  parseEndpointReference,
   type Appearance,
   type ClientDeclaration,
   type EndpointLifecycle,
@@ -36,6 +36,7 @@ import {
   type SystemProgramEvents,
   type SystemUploads,
   type Storage,
+  type Subscribable,
   type WritableAppearance,
   type Window,
   type WindowEvents,
@@ -59,7 +60,7 @@ import SystemRepresentation, {
 import { GatewayConnection, openConnection } from "./transport.js"
 import Uploads from "./uploads.js"
 import shell from "./shell.js"
-import websocket from "./websocket.js"
+import network from "./network.js"
 
 type ProgramProcessRunOptions = CoreProgramProcessRunOptions
 type ProgramProcessRunEvent = CoreProgramProcessRunEvent
@@ -85,11 +86,6 @@ interface SystemState {
 const systems = new WeakMap<System, SystemState>()
 const processSnapshots = new WeakMap<object, ProcessIdentityState>()
 
-const ProgramBase = CoreProgram as unknown as new () => object
-const ProcessBase = CoreProcess as unknown as new () => object
-const ServerEndpointBase = CoreServerEndpoint as unknown as new () => object
-const ClientEndpointBase = CoreClientEndpoint as unknown as new () => object
-
 /** One connected owner-local implementation of the shared System contract. */
 export class System implements CoreSystem {
   public readonly storage: Storage
@@ -97,15 +93,7 @@ export class System implements CoreSystem {
   public readonly program: SystemProgram
   public readonly process: SystemProcess
   public readonly uploads: SystemUploads
-
-  public async fetch(input: RequestInfo | URL, init?: RequestInit) {
-    const request = new Request(input, init)
-    return await fetch(request, { signal: connectedSignal(this, request.signal) })
-  }
-
-  public websocket(url: string | URL, protocols?: string | string[]) {
-    return websocket(url, protocols, connectedSignal(this))
-  }
+  public readonly network = network(() => connectedSignal(this))
 
   public async *shell(command: string, options: ShellOptions = {}) {
     yield* shell(command, { ...options, signal: connectedSignal(this, options.signal) })
@@ -250,9 +238,10 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   }
 }
 
-interface ProgramHandle extends Program {}
-
-class ProgramHandle extends ProgramBase {
+class ProgramHandle extends CoreProgram {
+  public override readonly subscribe: Subscribable<ProgramEvents, never>["subscribe"]
+  public override readonly wait: Subscribable<ProgramEvents, never>["wait"]
+  public override readonly events: Subscribable<ProgramEvents, never>["events"]
   private readonly reference: string
   public readonly identity: string
   public readonly data: Storage
@@ -271,10 +260,13 @@ class ProgramHandle extends ProgramBase {
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    bindEvents(this, new Events<ProgramEvents>(["forget", "uninstall"], (event, subscriber) => {
+    const events = new Events<ProgramEvents>(["forget", "uninstall"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => subscriber(values[0]))
-    }))
+    })
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
     representation(system).on(`program:${this.reference}:change`, value => this.update(value as ProgramState))
     const call = <Result = unknown>(event: string, ...values: unknown[]) => representation(system).call<Result>(event, ...values)
     this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`, () => connectedSignal(system))
@@ -298,18 +290,7 @@ class ProgramHandle extends ProgramBase {
       service: this.snapshot.server.service
     }) : null
   }
-  public get client(): ClientDeclaration | null {
-    return this.snapshot.client ? Object.freeze({
-      start: this.snapshot.client.start,
-      service: this.snapshot.client.service,
-      title: this.snapshot.client.title,
-      size: this.snapshot.client.size,
-      position: this.snapshot.client.position,
-      layer: this.snapshot.client.layer,
-      minimize: this.snapshot.client.minimize,
-      permissions: parseClientPermissions(this.snapshot.client.permissions)
-    }) : null
-  }
+  public get client(): ClientDeclaration | null { return this.snapshot.client }
 
   public update(snapshot: ProgramState) {
     if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
@@ -457,9 +438,10 @@ class ProcessRegistry extends Events<SystemProcessEvents> {
   }
 }
 
-interface ProcessHandle extends Process {}
-
-class ProcessHandle extends ProcessBase {
+class ProcessHandle extends CoreProcess {
+  public override readonly subscribe: Subscribable<ProcessEvents, never>["subscribe"]
+  public override readonly wait: Subscribable<ProcessEvents, never>["wait"]
+  public override readonly events: Subscribable<ProcessEvents, never>["events"]
   public readonly identity: string
   public readonly name: string | null
   public readonly startedAt: Date
@@ -469,9 +451,12 @@ class ProcessHandle extends ProcessBase {
   public constructor(private readonly system: System, snapshot: ProcessIdentityState) {
     super()
     processSnapshots.set(this, snapshot)
-    bindEvents(this, new Events<ProcessEvents>(["exit"], (_event, subscriber) => (
+    const events = new Events<ProcessEvents>(["exit"], (_event, subscriber) => (
       representation(system).on(`process:${snapshot.reference}:exit`, value => subscriber(value))
-    )))
+    ))
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
@@ -554,9 +539,10 @@ class EndpointOperations extends Events<{}, unknown> {
   }
 }
 
-interface ServerEndpointHandle extends CoreServerEndpoint {}
-
-class ServerEndpointHandle extends ServerEndpointBase {
+class ServerEndpointHandle extends CoreServerEndpoint {
+  public override readonly subscribe: Subscribable<{}, unknown>["subscribe"]
+  public override readonly wait: Subscribable<{}, unknown>["wait"]
+  public override readonly events: Subscribable<{}, unknown>["events"]
   public readonly endpoint = "server" as const
   public readonly traffic: ServerTrafficHandle
   public readonly lifecycle: EndpointLifecycle
@@ -572,7 +558,9 @@ class ServerEndpointHandle extends ServerEndpointBase {
       value => endpointFromReference(system, value)
     )
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, this.base)
+    this.subscribe = this.base.subscribe
+    this.wait = this.base.wait
+    this.events = this.base.events
   }
 
   public process() { return this.base.process() }
@@ -581,7 +569,7 @@ class ServerEndpointHandle extends ServerEndpointBase {
   public isService() { return this.base.isService() }
   public start(launch?: ServerLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
-  public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
+  public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 
   public async ask<Answer = unknown>(event: string, payload?: unknown) {
     return await this.askWithin<Answer>(event, payload, 10_000)
@@ -597,9 +585,10 @@ class ServerEndpointHandle extends ServerEndpointBase {
 
 }
 
-interface ClientEndpointHandle extends CoreClientEndpoint {}
-
-class ClientEndpointHandle extends ClientEndpointBase {
+class ClientEndpointHandle extends CoreClientEndpoint {
+  public override readonly subscribe: Subscribable<{}, unknown>["subscribe"]
+  public override readonly wait: Subscribable<{}, unknown>["wait"]
+  public override readonly events: Subscribable<{}, unknown>["events"]
   public readonly endpoint = "client" as const
   public readonly traffic: EndpointTrafficHandle
   public readonly lifecycle: EndpointLifecycle
@@ -616,7 +605,9 @@ class ClientEndpointHandle extends ClientEndpointBase {
       value => endpointFromReference(system, value)
     )
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, this.base)
+    this.subscribe = this.base.subscribe
+    this.wait = this.base.wait
+    this.events = this.base.events
     this.window = new SystemWindow(system, owner)
   }
 
@@ -626,13 +617,13 @@ class ClientEndpointHandle extends ClientEndpointBase {
   public isService() { return this.base.isService() }
   public start(launch?: ClientLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
-  public publish(event: string, payload?: unknown) { return this.base.publish(event, payload) }
+  public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 
 }
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "geometry", "minimize", "changeTitle", "front"], (event, subscriber) => {
+    super(["move", "resize", "geometry", "minimize", "maximize", "changeTitle", "front"], (event, subscriber) => {
       if (event === null) throw new Error("Window events are named")
       return representation(system).on(`window:${process.identity}:${event}`, subscriber)
     })
@@ -642,12 +633,14 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
   public async minimized() { return (await this.snapshot()).minimized }
+  public async maximized() { return (await this.snapshot()).maximized }
   public async front() { return frontWindow(this.system, this.process) }
   public async layer() { return (await this.snapshot()).layer }
   public async move(position: Position) { await this.change("move", position) }
   public async resize(size: Size) { await this.change("resize", size) }
   public async setGeometry(geometry: WindowGeometry) { await this.change("geometry", geometry) }
   public async minimize(minimized = true) { await this.change("minimize", minimized) }
+  public async maximize(maximized = true) { await this.change("maximize", maximized) }
   public async changeTitle(title: string) { await this.change("change-title", title) }
   public async raise() { await this.change("raise") }
 
@@ -684,15 +677,21 @@ class ServiceBase {
 
 class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends CoreServerService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
+  public override readonly subscribe: Subscribable<EventsMap, Fallback>["subscribe"]
+  public override readonly wait: Subscribable<EventsMap, Fallback>["wait"]
+  public override readonly events: Subscribable<EventsMap, Fallback>["events"]
   private readonly base: ServiceBase
 
   public constructor(private readonly system: System, private readonly key: ServiceKey & { endpoint: "server" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
+    const events = new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
       scope: "service", key, kind: "events", event
-    }, (_received, payload) => subscriber(payload), impossible)))
+    }, (_received, payload) => subscriber(payload), impossible))
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
   }
 
   public override exists() { return this.base.exists() }
@@ -710,15 +709,21 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 
 class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends CoreClientService<EventsMap, Fallback> {
   public override readonly lifecycle: EndpointLifecycle
+  public override readonly subscribe: Subscribable<EventsMap, Fallback>["subscribe"]
+  public override readonly wait: Subscribable<EventsMap, Fallback>["wait"]
+  public override readonly events: Subscribable<EventsMap, Fallback>["events"]
   private readonly base: ServiceBase
 
   public constructor(system: System, key: ServiceKey & { endpoint: "client" }) {
     super()
     this.base = new ServiceBase(system, key)
     this.lifecycle = this.base.lifecycle
-    bindEvents(this, new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
+    const events = new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
       scope: "service", key, kind: "events", event
-    }, (_received, payload) => subscriber(payload), impossible)))
+    }, (_received, payload) => subscriber(payload), impossible))
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
   }
 
   public override exists() { return this.base.exists() }
@@ -766,18 +771,6 @@ function programProcessEvent(system: System, event: string | null, values: unkno
   return event === "exit" ? { process, ...(values[1] as object) } : process
 }
 
-function bindEvents<Definitions extends object, Fallback>(target: object, events: Events<Definitions, Fallback>) {
-  Object.assign(target, eventsOf(events))
-}
-
-function eventsOf<Definitions extends object, Fallback>(events: Events<Definitions, Fallback>) {
-  return {
-    subscribe: events.subscribe,
-    wait: events.wait,
-    events: events.events
-  }
-}
-
 function chronological(left: Process, right: Process) { return left.startedAt.getTime() - right.startedAt.getTime() }
 async function programStoragePath(system: System, handle: ReturnType<ProgramHandle["address"]>, area: "data" | "cache") {
   const value = await representation(system).call<unknown>("/program/area", handle, area, "path", [])
@@ -786,10 +779,8 @@ async function programStoragePath(system: System, handle: ReturnType<ProgramHand
 }
 
 function endpointFromReference(system: System, value: unknown) {
-  const reference = value as EndpointReference | null
-  if (!reference || (reference.kind !== "server" && reference.kind !== "client") || typeof reference.process?.identity !== "string") {
-    throw new Error("The System returned an invalid Endpoint reference")
-  }
+  if (value === null) return null
+  const reference = parseEndpointReference(value)
   const owner = processHandle(system, required(representation(system).processes.get(reference.process.identity), reference.process.identity))
   return reference.kind === "server" ? owner.server : owner.client
 }
@@ -867,9 +858,6 @@ function required<Value>(value: Value | undefined, identity = ""): Value {
   throw new Error(`The System returned no ${identity ? `${identity} ` : ""}snapshot`)
 }
 
-interface EndpointReference { kind: "server" | "client", process: { identity: string } }
-
-type Program = CoreProgram
 type Process = CoreProcess
 type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreServerEndpoint<EventsMap, Fallback>
 type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>

@@ -87,23 +87,27 @@ export class Project {
       throw new Error("Nothing here says how this Program is developed")
     }
 
-    return {
+    const definition = {
       identity: config.identity,
       name: config.name,
       version: config.version,
       description: config.description,
+      categories: config.categories,
+      keywords: config.keywords,
+      website: config.website,
       icon: config.icon && resolve(this.directory, config.icon),
       agent: config.agent && resolve(this.directory, config.agent),
-      storage: resolve(this.directory, "storage"),
-      ...server && { server: {
+      storage: resolve(this.directory, "storage")
+    }
+    const serverDefinition = server ? {
         location: resolve(this.directory, server.location),
         start: server.start,
         service: server.service,
         installCommand: config.server?.installCommand,
         uninstallCommand: config.server?.uninstallCommand,
         ...serverExecution(server)
-      } },
-      ...client && { client: {
+      } : null
+    const clientDefinition = client ? {
         location: /^https?:\/\//i.test(client.location) ? client.location : resolve(this.directory, client.location),
         start: client.start,
         service: client.service,
@@ -112,9 +116,15 @@ export class Project {
         position: config.client?.position,
         layer: config.client?.layer,
         minimize: config.client?.minimize,
+        maximize: config.client?.maximize,
         permissions: config.client?.permissions
-      } }
-    } as ProgramDefinition
+      } : null
+
+    if (serverDefinition && clientDefinition) return { ...definition, server: serverDefinition, client: clientDefinition }
+    if (serverDefinition) return { ...definition, server: serverDefinition }
+    if (clientDefinition) return { ...definition, client: clientDefinition }
+
+    throw new Error("A Program must define a Server, a Client, or both")
   }
 
   /** Run the optional author-owned production build command. */
@@ -383,6 +393,7 @@ function packageDefinition(config: Config, version: string) {
       position: config.client.position,
       layer: config.client.layer,
       minimize: config.client.minimize,
+      maximize: config.client.maximize,
       permissions: config.client.permissions
     } }
   }

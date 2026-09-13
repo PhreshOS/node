@@ -48,7 +48,7 @@ test("System.shell executes locally and belongs to its System connection", async
     const waiting = running.next()
     const httpAddress = http.address()
     assert.equal(typeof httpAddress, "object")
-    const fetching = system.fetch(`http://127.0.0.1:${httpAddress.port}/`)
+    const fetching = system.network.fetch(`http://127.0.0.1:${httpAddress.port}/`)
     const shellClosed = assert.rejects(waiting, /System connection is closed/)
     const fetchClosed = assert.rejects(fetching, /System connection is closed/)
 
