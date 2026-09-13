@@ -288,8 +288,9 @@ function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: 
 
 function validateConfig(config: Config) {
   parseLaunch({ options: config.options })
-  if (config.startup !== undefined && typeof config.startup !== "boolean") parseLaunch(config.startup)
-  if (config.launch !== undefined && config.launch !== true) parseLaunch(config.launch)
+  for (const value of [config.startup, config.launch]) {
+    if (value !== undefined && value !== true) parseLaunch(value)
+  }
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
     throw new Error("A Program's identity must be kebab-case")
   }

@@ -108,7 +108,22 @@ test("authoring rejects invalid default options and startup launches", () => {
   const config = { identity: "example", client: { location: "client" } }
   assert.throws(() => Project.define({ ...config, options: { count: 1 } }), /text values/)
   assert.throws(() => Project.define({ ...config, startup: { client: { location: "old" } } }), /unknown field/)
+  assert.throws(() => Project.define({ ...config, launch: null }), /object/)
   assert.throws(() => Project.define({ ...config, launch: false }), /object/)
+  assert.throws(() => Project.define({ ...config, startup: false }), /object/)
+})
+
+test("authoring preserves optional startup and icon launch decisions", () => {
+  for (const value of [undefined, true]) {
+    const project = Project.define({
+      identity: "example", startup: value, launch: value,
+      client: { location: "client", development: { url: "http://localhost:5200" } }
+    })
+    for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
+      assert.equal(definition.startup, value)
+      assert.equal(definition.launch, value)
+    }
+  }
 })
 
 test("a development definition uses the direct-run Client port by default", () => {
