@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "vitest"
@@ -48,6 +48,8 @@ test("a Client development command receives its assigned address", async context
 
   const project = Project.define({
     identity: "development-program",
+    startup: true,
+    options: { language: "en" },
     client: {
       location: "dist/client",
       development: { startCommand: "node client.mjs" }
@@ -67,7 +69,42 @@ test("a Client development command receives its assigned address", async context
   assert.equal(environment.base, `/program/${assetId}/assets/`)
   assert.equal(Number.isInteger(environment.port), true)
   assert.equal(definition.client.location, `http://localhost:${environment.port}/`)
+  assert.equal(definition.startup, true)
+  assert.deepEqual(definition.options, { language: "en" })
   await assert.rejects(fetch(definition.client.location))
+})
+
+test("authoring defaults survive production, development, and packaging", async context => {
+  const directory = await mkdtemp(join(tmpdir(), "phresh-project-defaults-"))
+  context.onTestFinished(() => rm(directory, { force: true, recursive: true }))
+  await mkdir(join(directory, "client"))
+  await writeFile(join(directory, "client", "index.html"), "<!doctype html>")
+  await writeFile(join(directory, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }))
+  const defaults = {
+    options: { document: "default.txt", language: "en" },
+    startup: { options: { document: "welcome.txt" } }
+  }
+  const project = Project.define({
+    identity: "example",
+    ...defaults,
+    client: { location: "client", development: { url: "http://localhost:5200" } }
+  }, { directory })
+  for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
+    assert.deepEqual(definition.options, defaults.options)
+    assert.deepEqual(definition.startup, defaults.startup)
+  }
+  const packed = await project.pack()
+  const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
+  assert.deepEqual(definition.options, defaults.options)
+  assert.deepEqual(definition.startup, defaults.startup)
+  assert.equal(definition.storage, undefined)
+  assert.equal(definition.client.development, undefined)
+})
+
+test("authoring rejects invalid default options and startup launches", () => {
+  const config = { identity: "example", client: { location: "client" } }
+  assert.throws(() => Project.define({ ...config, options: { count: 1 } }), /text values/)
+  assert.throws(() => Project.define({ ...config, startup: { client: { location: "old" } } }), /unknown field/)
 })
 
 test("a development definition uses the direct-run Client port by default", () => {

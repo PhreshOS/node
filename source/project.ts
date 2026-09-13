@@ -1,5 +1,6 @@
 import {
   isRelativeValue,
+  parseLaunch,
   layers,
   type Config,
   type ClientDevelopment,
@@ -92,6 +93,8 @@ export class Project {
       name: config.name,
       version: config.version,
       description: config.description,
+      options: config.options,
+      startup: config.startup,
       categories: config.categories,
       keywords: config.keywords,
       website: config.website,
@@ -283,6 +286,8 @@ function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: 
 }
 
 function validateConfig(config: Config) {
+  parseLaunch({ options: config.options })
+  if (config.startup !== undefined && typeof config.startup !== "boolean") parseLaunch(config.startup)
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
     throw new Error("A Program's identity must be kebab-case")
   }
@@ -371,6 +376,8 @@ function packageDefinition(config: Config, version: string) {
     name: config.name,
     version,
     description: config.description,
+    options: config.options,
+    startup: config.startup,
     icon: config.icon ? "icon.png" : undefined,
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,
