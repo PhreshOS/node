@@ -7,6 +7,8 @@ import {
   ServerService as CoreServerService,
   isServiceKey,
   parseEndpointReference,
+  parseLaunch,
+  type ProgramLaunch as CoreProgramLaunch,
   type Appearance,
   type ClientDeclaration,
   type EndpointLifecycle,
@@ -251,6 +253,7 @@ class ProgramHandle extends CoreProgram {
   public readonly database: ProgramSql
   public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
+  public readonly launch: CoreProgramLaunch
   public readonly permissions
   private snapshot: ProgramState
 
@@ -276,6 +279,7 @@ class ProgramHandle extends CoreProgram {
     this.database = programSql(call, address, "database")
     this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
+    this.launch = new ProgramLaunch(system, this)
     this.permissions = programPermissions(call, address)
   }
 
@@ -316,16 +320,24 @@ class ProgramHandle extends CoreProgram {
   public install() { return command(this.system, "install", this.address()) }
   public uninstall(everything = false) { return command(this.system, "uninstall", this.address(), everything) }
 
-  public async fork(identity: string) {
-    const created = await representation(this.system).call<string>("/program/fork-program", this.address(), identity)
-    return programHandle(this.system, required(representation(this.system).programs.get(created), created))
-  }
-
   public async forget() {
     await representation(this.system).call("/program/forget-program", this.address(), "")
   }
 
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
+}
+
+class ProgramLaunch implements CoreProgramLaunch {
+  public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
+
+  public async get() {
+    const value = await representation(this.system).call<unknown>("/program/launch", this.program.address(), "get")
+    return value === null ? null : parseLaunch(value)
+  }
+
+  public async set(launch: Launch) {
+    await representation(this.system).call("/program/launch", this.program.address(), "set", parseLaunch(launch))
+  }
 }
 
 class ProgramStartup {

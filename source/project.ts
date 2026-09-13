@@ -95,6 +95,7 @@ export class Project {
       description: config.description,
       options: config.options,
       startup: config.startup,
+      launch: config.launch,
       categories: config.categories,
       keywords: config.keywords,
       website: config.website,
@@ -288,6 +289,7 @@ function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: 
 function validateConfig(config: Config) {
   parseLaunch({ options: config.options })
   if (config.startup !== undefined && typeof config.startup !== "boolean") parseLaunch(config.startup)
+  if (config.launch !== undefined && config.launch !== true) parseLaunch(config.launch)
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
     throw new Error("A Program's identity must be kebab-case")
   }
@@ -378,6 +380,7 @@ function packageDefinition(config: Config, version: string) {
     description: config.description,
     options: config.options,
     startup: config.startup,
+    launch: config.launch,
     icon: config.icon ? "icon.png" : undefined,
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,

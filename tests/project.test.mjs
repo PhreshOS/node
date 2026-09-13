@@ -82,7 +82,8 @@ test("authoring defaults survive production, development, and packaging", async 
   await writeFile(join(directory, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }))
   const defaults = {
     options: { document: "default.txt", language: "en" },
-    startup: { options: { document: "welcome.txt" } }
+    startup: { options: { document: "welcome.txt" } },
+    launch: { options: { document: "icon.txt" } }
   }
   const project = Project.define({
     identity: "example",
@@ -92,11 +93,13 @@ test("authoring defaults survive production, development, and packaging", async 
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.options, defaults.options)
     assert.deepEqual(definition.startup, defaults.startup)
+    assert.deepEqual(definition.launch, defaults.launch)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
   assert.deepEqual(definition.options, defaults.options)
   assert.deepEqual(definition.startup, defaults.startup)
+  assert.deepEqual(definition.launch, defaults.launch)
   assert.equal(definition.storage, undefined)
   assert.equal(definition.client.development, undefined)
 })
@@ -105,6 +108,7 @@ test("authoring rejects invalid default options and startup launches", () => {
   const config = { identity: "example", client: { location: "client" } }
   assert.throws(() => Project.define({ ...config, options: { count: 1 } }), /text values/)
   assert.throws(() => Project.define({ ...config, startup: { client: { location: "old" } } }), /unknown field/)
+  assert.throws(() => Project.define({ ...config, launch: false }), /object/)
 })
 
 test("a development definition uses the direct-run Client port by default", () => {
