@@ -1,6 +1,6 @@
 {
   "name": "@phreshos/node",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
@@ -31,9 +31,8 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "check": "tsc --noEmit && tsc -p tsconfig.test.json",
     "build": "node --run clean && tsc --noEmit false --outDir dist --rootDir source",
-    "test": "node --run build && node --test tests/*.test.mjs",
-    "verify:package": "node scripts/verify-package.mjs",
-    "verify": "node --run check && node --run test && node --run verify:package",
+    "test": "vitest run --project default",
+    "verify": "node --run check && node --run build && node --run test",
     "prepack": "node --run build"
   },
   "dependencies": {
@@ -43,12 +42,13 @@
     "jiti": "^2.7.0"
   },
   "peerDependencies": {
-    "@phreshos/core": "^0.1.42"
+    "@phreshos/core": "^0.1.43"
   },
   "devDependencies": {
-    "@phreshos/core": "^0.1.42",
+    "@phreshos/core": "^0.1.43",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.2.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
   }
 }

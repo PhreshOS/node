@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
 import { createServer as createHttpServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import test from "node:test"
+import { test } from "vitest"
 import { System, gatewayAddress } from "../dist/main.js"
 import { createGateway } from "./gateway-fixture.mjs"
 

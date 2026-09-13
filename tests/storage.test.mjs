@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Storage, StorageFile } from "@phreshos/core"
 import { filesystemStorage } from "../dist/storage.js"
-import test from "node:test"
+import { test } from "vitest"
 
 test("Storage and StorageFile preserve one private boundary across entry points", async function () {
   const root = await mkdtemp(join(tmpdir(), "phreshos-node-storage-"))

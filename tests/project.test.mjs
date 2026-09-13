@@ -2,14 +2,14 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import test from "node:test"
+import { test } from "vitest"
 import { Project } from "../dist/main.js"
 
 test("a Client development command receives its assigned address", async context => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
   const observation = join(directory, "development.json")
 
-  context.after(() => rm(directory, { force: true, recursive: true }))
+  context.onTestFinished(() => rm(directory, { force: true, recursive: true }))
 
   await writeFile(join(directory, "client.mjs"), `
     import { writeFile } from "node:fs/promises"
