@@ -5,6 +5,26 @@ import { join } from "node:path"
 import { test } from "vitest"
 import { Project } from "../dist/main.js"
 
+test("Project installation forwards the shared installation decisions and output", async () => {
+  const decisions = { launch: { name: "main", replace: true }, purge: true }
+  const project = Project.define({ identity: "install-example", client: { location: "client" } })
+  const system = {
+    program: {
+      async forceCreate(definition) {
+        assert.equal(definition.identity, "install-example")
+        return {
+          async *install(options) {
+            assert.deepEqual(options, decisions)
+            yield { stream: "stdout", text: "installed" }
+          }
+        }
+      }
+    }
+  }
+  const stream = await project.install(system, decisions)
+  assert.deepEqual(await Array.fromAsync(stream), [{ stream: "stdout", text: "installed" }])
+})
+
 test("a Client development command receives its assigned address", async context => {
   const directory = await mkdtemp(join(tmpdir(), "phresh-project-"))
   const observation = join(directory, "development.json")
@@ -49,7 +69,6 @@ test("a Client development command receives its assigned address", async context
   const project = Project.define({
     identity: "development-program",
     startup: true,
-    options: { language: "en" },
     client: {
       location: "dist/client",
       development: { startCommand: "node client.mjs" }
@@ -70,7 +89,6 @@ test("a Client development command receives its assigned address", async context
   assert.equal(Number.isInteger(environment.port), true)
   assert.equal(definition.client.location, `http://localhost:${environment.port}/`)
   assert.equal(definition.startup, true)
-  assert.deepEqual(definition.options, { language: "en" })
   await assert.rejects(fetch(definition.client.location))
 })
 
@@ -81,7 +99,6 @@ test("authoring defaults survive production, development, and packaging", async 
   await writeFile(join(directory, "client", "index.html"), "<!doctype html>")
   await writeFile(join(directory, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }))
   const defaults = {
-    options: { document: "default.txt", language: "en" },
     startup: { options: { document: "welcome.txt" } },
     launch: { options: { document: "icon.txt" } }
   }
@@ -91,22 +108,19 @@ test("authoring defaults survive production, development, and packaging", async 
     client: { location: "client", development: { url: "http://localhost:5200" } }
   }, { directory })
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
-    assert.deepEqual(definition.options, defaults.options)
     assert.deepEqual(definition.startup, defaults.startup)
     assert.deepEqual(definition.launch, defaults.launch)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
-  assert.deepEqual(definition.options, defaults.options)
   assert.deepEqual(definition.startup, defaults.startup)
   assert.deepEqual(definition.launch, defaults.launch)
   assert.equal(definition.storage, undefined)
   assert.equal(definition.client.development, undefined)
 })
 
-test("authoring rejects invalid default options and startup launches", () => {
+test("authoring rejects invalid startup launches", () => {
   const config = { identity: "example", client: { location: "client" } }
-  assert.throws(() => Project.define({ ...config, options: { count: 1 } }), /text values/)
   assert.throws(() => Project.define({ ...config, startup: { client: { location: "old" } } }), /unknown field/)
   assert.throws(() => Project.define({ ...config, launch: null }), /object/)
   assert.throws(() => Project.define({ ...config, launch: false }), /object/)

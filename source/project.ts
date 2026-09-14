@@ -6,6 +6,7 @@ import {
   type ClientDevelopment,
   type Position,
   type ProgramDefinition,
+  type ProgramInstallOptions,
   type ServerExecution,
   type Size,
   type System as SystemContract,
@@ -93,7 +94,6 @@ export class Project {
       name: config.name,
       version: config.version,
       description: config.description,
-      options: config.options,
       startup: config.startup,
       launch: config.launch,
       categories: config.categories,
@@ -194,10 +194,10 @@ export class Project {
   }
 
   /** Build this Project and return its Program installation generator. */
-  public async install(system: SystemContract) {
+  public async install(system: SystemContract, options: ProgramInstallOptions = {}) {
     await this.build()
     const program = await system.program.forceCreate(this.productionDefinition())
-    return program.install()
+    return program.install(options)
   }
 
   /** Build and package this Program into its canonical release shape. */
@@ -287,7 +287,6 @@ function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: 
 }
 
 function validateConfig(config: Config) {
-  parseLaunch({ options: config.options })
   for (const value of [config.startup, config.launch]) {
     if (value !== undefined && value !== true) parseLaunch(value)
   }
@@ -379,7 +378,6 @@ function packageDefinition(config: Config, version: string) {
     name: config.name,
     version,
     description: config.description,
-    options: config.options,
     startup: config.startup,
     launch: config.launch,
     icon: config.icon ? "icon.png" : undefined,

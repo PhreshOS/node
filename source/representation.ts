@@ -187,7 +187,7 @@ export default class SystemRepresentation {
 
     subscribe("/auth/program/create", value => this.arriveProgram("create", value))
     subscribe("/auth/program/install", value => this.arriveProgram("install", value))
-    subscribe("/auth/program/uninstall", (value, everything) => this.uninstallProgram(value, everything === true))
+    subscribe("/auth/program/uninstall", (value, purge) => this.uninstallProgram(value, purge === true))
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
 
     subscribe("/auth/process/created", value => this.createProcess(value))
@@ -211,12 +211,12 @@ export default class SystemRepresentation {
     this.emit(`program:${event}`, program)
   }
 
-  private uninstallProgram(value: unknown, everything: boolean) {
+  private uninstallProgram(value: unknown, purge: boolean) {
     const program = programState(value)
     this.programs.set(program.identity, program)
     this.emit(`program:${program.reference}:change`, program)
-    this.emit(`program:${program.reference}:uninstall`, everything)
-    this.emit("program:uninstall", program, everything)
+    this.emit(`program:${program.reference}:uninstall`, purge)
+    this.emit("program:uninstall", program, purge)
   }
 
   private forgetProgram(value: unknown) {

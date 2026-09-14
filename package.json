@@ -1,6 +1,6 @@
 {
   "name": "@phreshos/node",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Node.js access to PhreshOS and Program projects.",
   "type": "module",
   "main": "dist/main.js",
@@ -42,10 +42,10 @@
     "jiti": "^2.7.0"
   },
   "peerDependencies": {
-    "@phreshos/core": "^0.1.45"
+    "@phreshos/core": "^0.1.47"
   },
   "devDependencies": {
-    "@phreshos/core": "^0.1.45",
+    "@phreshos/core": "^0.1.47",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.2.0",
     "typescript": "^6.0.3",

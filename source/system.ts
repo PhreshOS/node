@@ -21,6 +21,8 @@ import {
   type ProgramDefinition,
   type ProgramEvents,
   type ProgramCommandChunk,
+  type ProgramInstallOptions,
+  type ProgramUninstallOptions,
   type ProgramIconSize,
   type ProgramProcessEvents,
   type ProgramProcessRunEvent as CoreProgramProcessRunEvent,
@@ -236,7 +238,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
 
   private event(event: string, values: unknown[]) {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
-    return event === "uninstall" ? { program, everything: values[1] === true } : program
+    return event === "uninstall" ? { program, purge: values[1] === true } : program
   }
 }
 
@@ -317,8 +319,8 @@ class ProgramHandle extends CoreProgram {
     return this.snapshot.installed
   }
 
-  public install() { return command(this.system, "install", this.address()) }
-  public uninstall(everything = false) { return command(this.system, "uninstall", this.address(), everything) }
+  public install(options: ProgramInstallOptions = {}) { return command(this.system, "install", this.address(), options) }
+  public uninstall(options: ProgramUninstallOptions = {}) { return command(this.system, "uninstall", this.address(), options) }
 
   public async forget() {
     await representation(this.system).call("/program/forget-program", this.address(), "")
