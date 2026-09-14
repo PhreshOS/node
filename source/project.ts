@@ -94,8 +94,8 @@ export class Project {
       name: config.name,
       version: config.version,
       description: config.description,
-      startup: config.startup,
-      launch: config.launch,
+      startup: launchValue(config.startup),
+      launch: launchValue(config.launch),
       categories: config.categories,
       keywords: config.keywords,
       website: config.website,
@@ -344,6 +344,10 @@ function validateConfig(config: Config) {
   }
 }
 
+function launchValue(value: Config["launch"]): Config["launch"] {
+  return value === undefined || value === true ? value : parseLaunch(value)
+}
+
 function execution(value: { startCommand?: unknown, entryFile?: unknown }, owner: string) {
   const command = typeof value.startCommand === "string" && value.startCommand.trim().length > 0
   const entry = typeof value.entryFile === "string" && value.entryFile.trim().length > 0
@@ -378,8 +382,8 @@ function packageDefinition(config: Config, version: string) {
     name: config.name,
     version,
     description: config.description,
-    startup: config.startup,
-    launch: config.launch,
+    startup: launchValue(config.startup),
+    launch: launchValue(config.launch),
     icon: config.icon ? "icon.png" : undefined,
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,

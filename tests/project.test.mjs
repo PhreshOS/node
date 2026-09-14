@@ -119,9 +119,9 @@ test("authoring defaults survive production, development, and packaging", async 
   assert.equal(definition.client.development, undefined)
 })
 
-test("authoring rejects invalid startup launches", () => {
+test("authoring validates consumed startup values and ignores additional properties", () => {
   const config = { identity: "example", client: { location: "client" } }
-  assert.throws(() => Project.define({ ...config, startup: { client: { location: "old" } } }), /unknown field/)
+  assert.deepEqual(Project.define({ ...config, startup: { client: { extension: true } } }).productionDefinition().startup, { client: {} })
   assert.throws(() => Project.define({ ...config, launch: null }), /object/)
   assert.throws(() => Project.define({ ...config, launch: false }), /object/)
   assert.throws(() => Project.define({ ...config, startup: false }), /object/)
