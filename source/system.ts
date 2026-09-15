@@ -1,16 +1,22 @@
 import {
+  Connection as CoreConnection,
   ClientEndpoint as CoreClientEndpoint,
   ClientService as CoreClientService,
   Process as CoreProcess,
   Program as CoreProgram,
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
+  Session as CoreSession,
   isServiceKey,
   parseEndpointReference,
+  parseConnectionSnapshot,
   parseLaunch,
+  parseSessionSnapshot,
   type ProgramLaunch as CoreProgramLaunch,
   type Appearance,
   type ClientDeclaration,
+  type ConnectionEvents,
+  type ConnectionSnapshot,
   type EndpointLifecycle,
   type EndpointLifecycleEvents,
   type EndpointDeclaration,
@@ -24,7 +30,6 @@ import {
   type ProgramInstallOptions,
   type ProgramUninstallOptions,
   type ProgramIconSize,
-  type ProgramProcessEvents,
   type ProgramProcessRunEvent as CoreProgramProcessRunEvent,
   type ProgramProcessRunOptions as CoreProgramProcessRunOptions,
   type ProgramSql,
@@ -34,11 +39,17 @@ import {
   type ShellOptions,
   type Size,
   type System as CoreSystem,
+  type SystemConnection,
+  type SystemConnectionEvents,
   type SystemProcessEvents,
   type SystemProcess,
   type SystemProgram,
   type SystemProgramEvents,
   type SystemUploads,
+  type SystemSession,
+  type SystemSessionEvents,
+  type SessionEvents,
+  type SessionSnapshot,
   type Storage,
   type Subscribable,
   type WritableAppearance,
@@ -96,6 +107,8 @@ export class System implements CoreSystem {
   public readonly appearance: WritableAppearance
   public readonly program: SystemProgram
   public readonly process: SystemProcess
+  public readonly connection: SystemConnection
+  public readonly session: SystemSession
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
 
@@ -114,6 +127,8 @@ export class System implements CoreSystem {
     this.appearance = new SystemAppearance(this)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
+    this.connection = new ConnectionRegistry(this)
+    this.session = new SessionRegistry(this)
     this.uploads = new Uploads(value => uploadRequest(this, value), () => connectedSignal(this))
     representation.activate()
   }
@@ -191,6 +206,18 @@ function processHandle(system: System, snapshot: ProcessIdentityState) {
   return systemState(system).handles.obtain(`process:${snapshot.reference}`, () => new ProcessHandle(system, snapshot))
 }
 
+function connectionHandle(system: System, value: unknown) {
+  const snapshot = parseConnectionSnapshot(value)
+  const handle = systemState(system).handles.obtain(`connection:${snapshot.identity}`, () => new ConnectionHandle(system, snapshot))
+  return handle
+}
+
+function sessionHandle(system: System, value: unknown) {
+  const snapshot = parseSessionSnapshot(value)
+  const handle = systemState(system).handles.obtain(`session:${snapshot.identity}`, () => new SessionHandle(system, snapshot))
+  return handle
+}
+
 class SystemAppearance extends Events<{ change: Appearance }> {
   public constructor(private readonly system: System) {
     super(["change"], (_event, subscriber) => representation(system).on("appearance", subscriber))
@@ -202,6 +229,117 @@ class SystemAppearance extends Events<{ change: Appearance }> {
 
   public async update(appearance: Appearance) {
     await representation(this.system).call("/appearance/update", appearance)
+  }
+}
+
+class ConnectionRegistry extends Events<SystemConnectionEvents> implements SystemConnection {
+  public constructor(private readonly system: System) {
+    super(["create", "disconnect"], (event, subscriber) => {
+      if (event === null) throw new Error("System Connection events are named")
+      return representation(system).on(`connection:${event}`, value => subscriber(connectionHandle(system, value)))
+    })
+  }
+
+  public async list() {
+    const snapshots = await representation(this.system).call<unknown[]>("/connection/list")
+    return snapshots.map(value => connectionHandle(this.system, value))
+  }
+
+  public async find(identity: string) {
+    const snapshot = await representation(this.system).call<unknown>("/connection/find", identity)
+    return snapshot === null ? null : connectionHandle(this.system, snapshot)
+  }
+}
+
+class ConnectionHandle extends CoreConnection {
+  public readonly subscribe: CoreConnection["subscribe"]
+  public readonly wait: CoreConnection["wait"]
+  public readonly events: CoreConnection["events"]
+  public readonly identity: string
+  public constructor(private readonly system: System, snapshot: ConnectionSnapshot) {
+    super()
+    this.identity = snapshot.identity
+    const events = new Events<ConnectionEvents>(["sessionChange", "disconnect"], (event, subscriber) => {
+      if (event === null) throw new Error("Connection events are named")
+      return representation(system).on(`connection:${this.identity}:${event}`, value => {
+        if (event === "sessionChange") subscriber(value === null ? null : sessionHandle(system, value))
+        else subscriber(undefined)
+      })
+    })
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
+  }
+
+  public async connected() {
+    const snapshot = parseConnectionSnapshot(await representation(this.system).call("/connection/state", this.identity))
+    return snapshot.connected
+  }
+
+  public async session() {
+    const snapshot = await representation(this.system).call("/connection/session", this.identity)
+    return snapshot === null ? null : sessionHandle(this.system, snapshot)
+  }
+
+  public async signIn() {
+    return sessionHandle(this.system, await representation(this.system).call("/connection/sign-in", this.identity))
+  }
+}
+
+class SessionRegistry extends Events<SystemSessionEvents> implements SystemSession {
+  public constructor(private readonly system: System) {
+    super(["create", "end"], (event, subscriber) => {
+      if (event === null) throw new Error("System Session events are named")
+      return representation(system).on(`session:${event}`, (...values) => {
+        const session = sessionHandle(system, values[0])
+        subscriber(event === "end" ? { session, reason: values[1] } : session)
+      })
+    })
+  }
+
+  public async list() {
+    const snapshots = await representation(this.system).call<unknown[]>("/session/list")
+    return snapshots.map(value => sessionHandle(this.system, value))
+  }
+
+  public async find(identity: string) {
+    const snapshot = await representation(this.system).call<unknown>("/session/find", identity)
+    return snapshot === null ? null : sessionHandle(this.system, snapshot)
+  }
+}
+
+class SessionHandle extends CoreSession {
+  public readonly subscribe: CoreSession["subscribe"]
+  public readonly wait: CoreSession["wait"]
+  public readonly events: CoreSession["events"]
+  public readonly identity: string
+  public constructor(private readonly system: System, snapshot: SessionSnapshot) {
+    super()
+    this.identity = snapshot.identity
+    const events = new Events<SessionEvents>(["connectionAttach", "connectionDetach", "end"], (event, subscriber) => {
+      if (event === null) throw new Error("Session events are named")
+      return representation(system).on(`session:${this.identity}:${event}`, (...values) => {
+        if (event === "connectionAttach" || event === "connectionDetach") subscriber(connectionHandle(system, values[0]))
+        else subscriber({ reason: values[0] })
+      })
+    })
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
+  }
+
+  public async valid() {
+    const snapshot = parseSessionSnapshot(await representation(this.system).call("/session/state", this.identity))
+    return snapshot.valid
+  }
+
+  public async connections() {
+    const snapshots = await representation(this.system).call<unknown[]>("/session/connections", this.identity)
+    return snapshots.map(value => connectionHandle(this.system, value))
+  }
+
+  public async signOut() {
+    await representation(this.system).call("/session/sign-out", this.identity)
   }
 }
 
@@ -253,7 +391,6 @@ class ProgramHandle extends CoreProgram {
   public readonly store: ProgramStore
   public readonly logs: ProgramSql
   public readonly database: ProgramSql
-  public readonly process: ProgramProcesses
   public readonly startup: ProgramStartup
   public readonly launch: CoreProgramLaunch
   public readonly permissions
@@ -265,9 +402,13 @@ class ProgramHandle extends CoreProgram {
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    const events = new Events<ProgramEvents>(["forget", "uninstall"], (event, subscriber) => {
+    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
-      return representation(system).on(`program:${this.reference}:${event}`, (...values) => subscriber(values[0]))
+      return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
+        if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
+        else if (event === "uninstall") subscriber({ purge: values[0] === true })
+        else subscriber(undefined)
+      })
     })
     this.subscribe = events.subscribe
     this.wait = events.wait
@@ -279,7 +420,6 @@ class ProgramHandle extends CoreProgram {
     this.store = programStore(call, address)
     this.logs = programSql(call, address, "logs")
     this.database = programSql(call, address, "database")
-    this.process = new ProgramProcesses(system, this)
     this.startup = new ProgramStartup(system, this)
     this.launch = new ProgramLaunch(system, this)
     this.permissions = programPermissions(call, address)
@@ -319,11 +459,68 @@ class ProgramHandle extends CoreProgram {
     return this.snapshot.installed
   }
 
+  public async processes() {
+    return [...representation(this.system).processes.values()]
+      .filter(process => process.program === this.identity)
+      .map(process => processHandle(this.system, process))
+  }
+
+  public async firstProcess() { return (await this.processes()).sort(chronological)[0] ?? null }
+
+  public async lastProcess() { return (await this.processes()).sort(chronological).at(-1) ?? null }
+
+  public async findProcess(identityOrName: string) {
+    return (await this.processes()).find(process => process.identity === identityOrName || process.name === identityOrName) ?? null
+  }
+
+  public createProcess(launch: Launch = {}) { return this.createExactProcess("create-process", launch) }
+
+  public findOrCreateProcess(launch: Launch & { name: string }) { return this.createExactProcess("find-or-create-process", launch) }
+
+  public async exitProcesses() {
+    return await representation(this.system).call<string[]>("/process/exit-all", this.identity, "")
+  }
+
+  public async *runProcess(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
+    let process: ProcessHandle | null = null
+
+    for await (const event of representation(this.system).command("run", this.address(), launch, options.signal)) {
+      if (event.event === "started") {
+        const identity = (event.process as { identity?: unknown } | undefined)?.identity
+        if (typeof identity !== "string") throw new Error("The System returned an invalid started Process")
+        process = processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
+        yield Object.freeze({ event: "started", process })
+      } else if (event.event === "output") {
+        if ((event.stream !== "stdout" && event.stream !== "stderr") || typeof event.text !== "string") {
+          throw new Error("The System returned an invalid Process output event")
+        }
+        yield Object.freeze({ event: "output", stream: event.stream, text: event.text })
+      } else if (event.event === "exited") {
+        if (!process) throw new Error("The System ended a Process before confirming its start")
+        const value = event.exit as { status?: unknown, code?: unknown, signal?: unknown } | undefined
+        if (!value
+          || (value.status !== "exited" && value.status !== "signaled")
+          || (value.code !== null && typeof value.code !== "number")
+          || (value.signal !== null && typeof value.signal !== "string")) {
+          throw new Error("The System returned an invalid Process exit event")
+        }
+        const exit = Object.freeze({ status: value.status, code: value.code, signal: value.signal })
+        yield Object.freeze({ event: "exited", process, exit })
+      } else throw new Error("The System returned an unknown Process run event")
+    }
+  }
+
   public install(options: ProgramInstallOptions = {}) { return command(this.system, "install", this.address(), options) }
   public uninstall(options: ProgramUninstallOptions = {}) { return command(this.system, "uninstall", this.address(), options) }
 
   public async forget() {
     await representation(this.system).call("/program/forget-program", this.address(), "")
+  }
+
+  private async createExactProcess(word: "create-process" | "find-or-create-process", launch: Launch) {
+    const route = word === "create-process" ? "/program/create-process" : "/program/find-or-create-process"
+    const identity = await representation(this.system).call<string>(route, this.address(), launch, null)
+    return processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
   }
 
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
@@ -359,80 +556,6 @@ class ProgramStartup {
 
   private async change(operation: "enable" | "disable", launch?: Launch) {
     await representation(this.system).call("/program/startup", this.program.address(), operation, launch)
-  }
-}
-
-class ProgramProcesses extends Events<ProgramProcessEvents> {
-  public constructor(private readonly system: System, private readonly program: ProgramHandle) {
-    super(["create", "exit"], (event, subscriber) => {
-      if (event === null) throw new Error("Program Process events are named")
-      return representation(system).on(`program:${program.identity}:process:${event}`, (...values) => (
-        subscriber(programProcessEvent(system, event, values))
-      ))
-    })
-  }
-
-  public async list() {
-    return [...representation(this.system).processes.values()]
-      .filter(process => process.program === this.program.identity)
-      .map(process => processHandle(this.system, process))
-  }
-  public async first() { return (await this.list()).sort(chronological)[0] ?? null }
-  public async last() { return (await this.list()).sort(chronological).at(-1) ?? null }
-
-  public async find(identityOrName: string) {
-    const found = (await this.list()).find(process => process.identity === identityOrName || process.name === identityOrName)
-    return found ?? null
-  }
-
-  public create(launch: Launch = {}) { return this.createExact("create-process", launch) }
-
-  public async *run(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
-    let process: ProcessHandle | null = null
-
-    for await (const event of representation(this.system).command("run", this.program.address(), launch, options.signal)) {
-      if (event.event === "started") {
-        const identity = (event.process as { identity?: unknown } | undefined)?.identity
-        if (typeof identity !== "string") throw new Error("The System returned an invalid started Process")
-        process = processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
-        yield Object.freeze({ event: "started", process })
-      } else if (event.event === "output") {
-        if ((event.stream !== "stdout" && event.stream !== "stderr") || typeof event.text !== "string") {
-          throw new Error("The System returned an invalid Process output event")
-        }
-        yield Object.freeze({
-          event: "output",
-          stream: event.stream,
-          text: event.text
-        })
-      } else if (event.event === "exited") {
-        if (!process) throw new Error("The System ended a Process before confirming its start")
-        const value = event.exit as { status?: unknown, code?: unknown, signal?: unknown } | undefined
-        if (!value
-          || (value.status !== "exited" && value.status !== "signaled")
-          || (value.code !== null && typeof value.code !== "number")
-          || (value.signal !== null && typeof value.signal !== "string")) {
-          throw new Error("The System returned an invalid Process exit event")
-        }
-        const exit = Object.freeze({
-          status: value.status,
-          code: value.code,
-          signal: value.signal
-        })
-        yield Object.freeze({ event: "exited", process, exit })
-      } else throw new Error("The System returned an unknown Process run event")
-    }
-  }
-  public findOrCreate(launch: Launch & { name: string }) { return this.createExact("find-or-create-process", launch) }
-
-  public async exitAll() {
-    return await representation(this.system).call<string[]>("/process/exit-all", this.program.identity, "")
-  }
-
-  private async createExact(word: "create-process" | "find-or-create-process", launch: Launch) {
-    const route = word === "create-process" ? "/program/create-process" : "/program/find-or-create-process"
-    const identity = await representation(this.system).call<string>(route, this.program.address(), launch, null)
-    return processHandle(this.system, required(representation(this.system).processes.get(identity), identity))
   }
 }
 
@@ -782,7 +905,7 @@ function processEvent(system: System, event: string, values: unknown[]) {
 
 function programProcessEvent(system: System, event: string | null, values: unknown[]) {
   const process = processHandle(system, required(values[0] as ProcessState | undefined))
-  return event === "exit" ? { process, ...(values[1] as object) } : process
+  return event === "processExit" ? { process, ...(values[1] as object) } : process
 }
 
 function chronological(left: Process, right: Process) { return left.startedAt.getTime() - right.startedAt.getTime() }

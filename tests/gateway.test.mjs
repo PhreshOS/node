@@ -81,11 +81,9 @@ test("Project returns the original production Process generator without consumin
       async forceCreate(definition) {
         calls.push({ operation: "forceCreate", definition })
         return {
-          process: {
-            run(launch, options) {
-              calls.push({ operation: "run", launch, signal: options.signal })
-              return lifecycle
-            }
+          runProcess(launch, options) {
+            calls.push({ operation: "run", launch, signal: options.signal })
+            return lifecycle
           }
         }
       }
@@ -128,7 +126,8 @@ test("Project returns the original development and installation generators", asy
         definitions.push(definition)
         return {
           assetId: "00000000-0000-4000-8000-000000000000",
-          process: { run: () => development },
+          runProcess: () => development,
+          forget: async () => undefined,
           install: () => installation
         }
       }
@@ -163,8 +162,7 @@ test("System.connect exposes the shared System contract over one owner-local add
   const home = await mkdtemp(join(tmpdir(), "phresh-gateway-"))
   const address = gatewayAddress(home)
   const server = createGateway(address, {
-    session: {
-      authorization: "owner",
+    snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [] },
@@ -263,8 +261,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
   }
   let creations = 0
   const server = createGateway(address, {
-    session: {
-      authorization: "owner",
+    snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [[program.identity, program]] },
@@ -273,7 +270,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     },
     async route({ event, values, publish }) {
       calls.push({ event, values })
-      const [, ...input] = values
+      const input = values
 
       if (event === "/auth/program/force-create-program") {
         const created = creations++ === 0 ? program : replacement
@@ -345,7 +342,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
 
     const controller = new AbortController()
     const processCreated = system.process.wait("create")
-    const run = created.process.run({ options: { mode: "test" } }, { signal: controller.signal })
+    const run = created.runProcess({ options: { mode: "test" } }, { signal: controller.signal })
     const started = await run.next()
 
     assert.equal(started.value.event, "started")
@@ -357,7 +354,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert(started.value.process.client instanceof Endpoint)
     assert.equal(await processCreated, started.value.process)
     assert.equal(await system.process.find(processRecord.identity), started.value.process)
-    assert.equal((await created.process.list())[0], started.value.process)
+    assert.equal((await created.processes())[0], started.value.process)
     assert.equal(await started.value.process.options("mode"), "test")
     const retainedParent = await started.value.process.parent()
     assert(retainedParent instanceof Process)
@@ -376,7 +373,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert(replaced instanceof Program)
     assert.notEqual(replaced, created)
     assert(calls.every(call => !call.event.startsWith("/gateway/")))
-    assert(calls.every(call => call.values[0] === "owner"))
+    assert(calls.every(call => !call.values.includes("owner")))
   } finally {
     await system.disconnect()
     await server.close()
@@ -414,8 +411,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
   let confirmUnfollow
   const unfollowed = new Promise(resolve => { confirmUnfollow = resolve })
   const server = createGateway(address, {
-    session: {
-      authorization: "owner",
+    snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [[program.identity, program]] },
@@ -423,7 +419,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
       }
     },
     async route({ event, values, publish }) {
-      const [, subscription, observation] = values
+      const [subscription, observation] = values
       if (event === "/auth/process/follow") {
         followed = observation
         await publish("/auth/process/followed", subscription, "changed", new Uint8Array([1, 2, 3]))

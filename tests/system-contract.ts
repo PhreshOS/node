@@ -1,9 +1,11 @@
 import type {
   ClientEndpoint,
+  Connection,
   Endpoint,
   Process,
   Program,
   ServerEndpoint,
+  Session,
   System as CoreSystem,
   Service,
   ServiceKey
@@ -28,6 +30,21 @@ const sameClient: ClientEndpoint<{ change: number }, string> = client
 const service: Service = connected.service({ program: "example", process: "main", endpoint: serviceEndpoint })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
+const connections: Promise<Connection[]> = connected.connection.list()
+const sessions: Promise<Session[]> = connected.session.list()
+
+async function authenticationDomains() {
+  const connection = (await connections)[0]
+  if (!connection) return
+  const session = await connection.signIn()
+  const sameSession: Session | null = await connection.session()
+  const attached: Connection[] = await session.connections()
+  await session.signOut()
+  void [sameSession, attached]
+}
+
+void authenticationDomains
+void sessions
 
 program.permissions.get("all")
 program.permissions.all()

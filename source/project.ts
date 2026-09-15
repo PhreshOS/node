@@ -184,7 +184,7 @@ export class Project {
 
     try {
       await client.start(program.assetId, options.signal)
-      const lifecycle = program.process.run({ options: options.options ?? {} }, { signal: client.processSignal(options.signal) })
+      const lifecycle = program.runProcess({ options: options.options ?? {} }, { signal: client.processSignal(options.signal) })
       return { client, lifecycle }
     } catch (error) {
       await client.dispose(error)
@@ -235,7 +235,7 @@ export class Project {
 
   private async run(system: SystemContract, definition: ProgramDefinition, options: ProjectRunOptions) {
     const program = await system.program.forceCreate(definition)
-    return program.process.run({ options: options.options ?? {} }, { signal: options.signal })
+    return program.runProcess({ options: options.options ?? {} }, { signal: options.signal })
   }
 }
 

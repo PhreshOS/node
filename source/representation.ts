@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto"
 import {
+  parseConnectionSnapshot,
   parseProgramSnapshot,
   parseAppearance,
+  parseSessionSnapshot,
+  parseSessionEndSnapshot,
   type Appearance,
   type ProcessSnapshot,
   type ProgramSnapshot,
@@ -45,7 +48,6 @@ const maximumStreamQueue = 256
 
 /** A connection-owned, live representation of the authoritative System model. */
 export default class SystemRepresentation {
-  public readonly authorization: string
   public readonly programs = new Map<string, ProgramState>()
   public readonly processes = new Map<string, ProcessState>()
   public appearance: Appearance
@@ -54,22 +56,21 @@ export default class SystemRepresentation {
   private readonly release: (() => void)[] = []
 
   public constructor(private readonly connection: GatewayConnection) {
-    const session = ownerSession(connection.session)
+    const snapshot = ownerSystem(connection.snapshot)
 
-    this.authorization = session.authorization
-    this.appearance = parseAppearance(session.linkManager.appearance.value)
+    this.appearance = parseAppearance(snapshot.linkManager.appearance.value)
 
-    for (const [, value] of session.authManager.programManager.programs) {
+    for (const [, value] of snapshot.authManager.programManager.programs) {
       const program = programState(value)
       this.programs.set(program.identity, program)
     }
 
-    for (const [, value] of session.authManager.processManager.processes) {
+    for (const [, value] of snapshot.authManager.processManager.processes) {
       const process = processState(value)
       this.processes.set(process.identity, process)
     }
 
-    this.followModel(session.linkManager.appearance.key)
+    this.followModel(snapshot.linkManager.appearance.key)
   }
 
   public activate() { this.connection.activate() }
@@ -80,7 +81,7 @@ export default class SystemRepresentation {
   }
 
   public call<Result = unknown>(event: string, ...values: unknown[]) {
-    return this.connection.call<Result>(`/auth${event}`, this.authorization, ...values)
+    return this.connection.call<Result>(`/auth${event}`, ...values)
   }
 
   public on(event: string, listener: Listener) {
@@ -199,9 +200,42 @@ export default class SystemRepresentation {
     subscribe("/auth/process/client-access", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/exited", (value, code, signal) => this.exitProcess(value, code, signal))
 
+    subscribe("/auth/connection/create", value => this.connectionEvent("create", value))
+    subscribe("/auth/connection/disconnect", value => this.connectionEvent("disconnect", value))
+    subscribe("/auth/connection/session-change", (connection, session) => {
+      const parsed = parseConnectionSnapshot(connection)
+      this.emit(`connection:${parsed.identity}:sessionChange`, session === null ? null : parseSessionSnapshot(session))
+    })
+    subscribe("/auth/session/create", value => this.sessionEvent("create", value))
+    subscribe("/auth/session/connection-attach", (session, connection) => {
+      const parsed = parseSessionSnapshot(session)
+      this.emit(`session:${parsed.identity}:connectionAttach`, parseConnectionSnapshot(connection))
+    })
+    subscribe("/auth/session/connection-detach", (session, connection) => {
+      const parsed = parseSessionSnapshot(session)
+      this.emit(`session:${parsed.identity}:connectionDetach`, parseConnectionSnapshot(connection))
+    })
+    subscribe("/auth/session/end", (session, reason) => {
+      const parsed = parseSessionEndSnapshot({ ...(session as object), reason })
+      this.emit(`session:${parsed.identity}:end`, parsed.reason)
+      this.emit("session:end", parsed, parsed.reason)
+    })
+
     for (const event of ["move", "resize", "geometry", "change-title", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
+  }
+
+  private connectionEvent(event: "create" | "disconnect", value: unknown) {
+    const connection = parseConnectionSnapshot(value)
+    this.emit(`connection:${connection.identity}:${event}`)
+    this.emit(`connection:${event}`, connection)
+  }
+
+  private sessionEvent(event: "create", value: unknown) {
+    const session = parseSessionSnapshot(value)
+    this.emit(`session:${session.identity}:${event}`)
+    this.emit(`session:${event}`, session)
   }
 
   private arriveProgram(event: "create" | "install", value: unknown) {
@@ -232,7 +266,8 @@ export default class SystemRepresentation {
     const process = processState(value)
     this.processes.set(process.identity, process)
     this.emit("process:create", process)
-    this.emit(`program:${process.program}:process:create`, process)
+    const program = this.programs.get(process.program)
+    if (program) this.emit(`program:${program.reference}:processCreate`, process)
   }
 
   private serverReady(value: unknown) {
@@ -266,7 +301,8 @@ export default class SystemRepresentation {
     }
     this.emit(`process:${process.reference}:exit`, exit)
     this.emit("process:exit", process, exit)
-    this.emit(`program:${process.program}:process:exit`, process, exit)
+    const program = this.programs.get(process.program)
+    if (program) this.emit(`program:${program.reference}:processExit`, process, exit)
   }
 
   private changeWindow(event: string, value: unknown) {
@@ -285,8 +321,8 @@ export default class SystemRepresentation {
 
 export type ProgramAddress = Readonly<{ identity: string, reference: string }>
 
-function ownerSession(value: unknown) {
-  if (!record(value) || typeof value.authorization !== "string") throw new Error("The System Gateway returned an invalid owner session")
+function ownerSystem(value: unknown) {
+  if (!record(value)) throw new Error("The System Gateway returned an invalid System snapshot")
   const linkManager = value.linkManager
   const authManager = value.authManager
   if (!record(linkManager) || !record(linkManager.appearance) || typeof linkManager.appearance.key !== "string") throw new Error("The System Gateway returned invalid Appearance state")
@@ -296,7 +332,6 @@ function ownerSession(value: unknown) {
   if (!Array.isArray(programs) || !Array.isArray(processes)) throw new Error("The System Gateway returned invalid domain collections")
 
   return {
-    authorization: value.authorization,
     linkManager: { appearance: { key: linkManager.appearance.key, value: linkManager.appearance.value } },
     authManager: {
       programManager: { programs: programs as [string, unknown][] },

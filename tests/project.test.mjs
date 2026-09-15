@@ -55,11 +55,9 @@ test("a Client development command receives its assigned address", async context
         definition = value
         return {
           assetId,
-          process: {
-            async *run() {
-              yield { event: "started", process }
-              yield { event: "exited", process, exit: { status: "exited", code: 0, signal: null } }
-            }
+          async *runProcess() {
+            yield { event: "started", process }
+            yield { event: "exited", process, exit: { status: "exited", code: 0, signal: null } }
           }
         }
       }

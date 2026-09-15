@@ -25,8 +25,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
     client: { service: false, window }
   }
   const gateway = createGateway(gatewayAddress(home), {
-    session: {
-      authorization: "owner",
+    snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
         programManager: { programs: [["example", program]] },
@@ -34,7 +33,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
       }
     },
     async route({ event, values, publish }) {
-      const [, identity, input] = values
+      const [identity, input] = values
       assert.equal(identity, "process")
       const operation = event.split("/").at(-1)
       if (operation === "maximize") window.maximized = input

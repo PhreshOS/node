@@ -7,7 +7,7 @@ const events = {
 
 /** One persistent owner-local IPC connection to the System Link Manager. */
 export class GatewayConnection {
-  public session: unknown = null
+  public snapshot: unknown = null
 
   private active = false
   private readonly queued: { event: string, values: unknown[] }[] = []
@@ -39,11 +39,11 @@ export class GatewayConnection {
     }
 
     try {
-      connection.session = await readiness.promise
+      connection.snapshot = await readiness.promise
       return connection
     } catch (error) {
       await link.disconnect()
-      throw new Error("The System Gateway did not establish an owner session", { cause: error })
+      throw new Error("The System Gateway did not provide its System snapshot", { cause: error })
     }
   }
 

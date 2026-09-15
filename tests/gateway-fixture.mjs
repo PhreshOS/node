@@ -2,8 +2,7 @@ import { SocketServer } from "@the-link/ipc/socket-server"
 import messagepack from "@the-link/messagepack"
 import { defaultAppearance } from "@phreshos/core"
 
-const emptySession = {
-  authorization: "owner",
+const emptySnapshot = {
   linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
   authManager: {
     programManager: { programs: [] },
@@ -31,7 +30,7 @@ export function createGateway(address, options = {}) {
     peer.$internal.subscribeOnce("disconnect", stop)
     options.connected?.(peer)
 
-    return peer.$outbound.publish("/gateway/ready", options.session ?? emptySession)
+    return peer.$outbound.publish("/gateway/ready", options.snapshot ?? emptySnapshot)
   })
 
   return server

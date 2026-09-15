@@ -14,12 +14,11 @@ test("saved launch get and set cross the owner boundary without launching", asyn
     client: { start: true, service: false, title: null, position: null, size: null, layer: null, minimize: null, maximize: null } }
   let saved = null
   const gateway = createGateway(gatewayAddress(home), {
-    session: { authorization: "owner", linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
+    snapshot: { linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: { programManager: { programs: [["example", program]] }, processManager: { processes: [] } } },
     async route({ event, values }) {
       assert.equal(event, "/auth/program/launch")
-      const [authorization, address, operation, value] = values
-      assert.equal(authorization, "owner")
+      const [address, operation, value] = values
       assert.deepEqual(address, { identity: "example", reference: "reference" })
       if (operation === "get") return saved
       assert.equal(operation, "set")
