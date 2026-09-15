@@ -219,6 +219,36 @@ test("System.connect exposes the shared System contract over one owner-local add
   }
 })
 
+test("System.connect closes the Gateway when its System snapshot cannot be represented", async () => {
+  const home = await mkdtemp(join(tmpdir(), "phresh-invalid-gateway-"))
+  const address = gatewayAddress(home)
+  let peer
+  let confirmDisconnect
+  const disconnected = new Promise(resolve => { confirmDisconnect = resolve })
+  const server = createGateway(address, {
+    snapshot: [],
+    connected(connection) {
+      peer = connection
+      connection.$internal.subscribeOnce("disconnect", confirmDisconnect)
+    }
+  })
+
+  await mkdir(home, { recursive: true })
+  await server.listen()
+
+  try {
+    await assert.rejects(System.connect(home), /invalid System snapshot/)
+    await Promise.race([
+      disconnected,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("The rejected System connection remained open")), 500))
+    ])
+  } finally {
+    await peer?.disconnect()
+    await server.close()
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
 test("System reconstructs and follows the authoritative LinkManager model", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-system-model-"))
   const address = gatewayAddress(home)

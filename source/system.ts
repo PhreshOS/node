@@ -137,7 +137,15 @@ export class System implements CoreSystem {
   public static async connect(home?: string) {
     const resolved = resolveHome(home)
     const address = gatewayAddress(resolved)
-    return new System(await openConnection(address))
+    const connection = await openConnection(address)
+
+    try { return new System(connection) }
+    catch (error) {
+      try { await connection.disconnect() }
+      catch { /* Preserve the representation failure that made this connection unusable. */ }
+
+      throw error
+    }
   }
 
   /** Close this owner connection and abort every attached operation it owns. */
