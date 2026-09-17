@@ -99,6 +99,7 @@ export class Project {
       categories: config.categories,
       keywords: config.keywords,
       website: config.website,
+      permissions: config.permissions,
       icon: config.icon && resolve(this.directory, config.icon),
       agent: config.agent && resolve(this.directory, config.agent),
       storage: resolve(this.directory, "storage")
@@ -120,8 +121,7 @@ export class Project {
         position: config.client?.position,
         layer: config.client?.layer,
         minimize: config.client?.minimize,
-        maximize: config.client?.maximize,
-        permissions: config.client?.permissions
+        maximize: config.client?.maximize
       } : null
 
     if (serverDefinition && clientDefinition) return { ...definition, server: serverDefinition, client: clientDefinition }
@@ -267,15 +267,17 @@ export interface Manifest {
 function serverHalf(half: Config["server"], mode: ProjectMode) {
   if (!half) return null
 
-  const { development, startCommand, entryFile, ...declared } = half
+  const { development, command, worker, sandbox, ...declared } = half
 
-  if (mode === "production" || !development) return { ...declared, ...serverExecution({ startCommand, entryFile } as ServerExecution) }
+  if (mode === "production" || !development) return { ...declared, ...serverExecution({ command, worker, sandbox } as ServerExecution) }
 
-  return { ...declared, location: ".", ...serverExecution(development) }
+  return { ...declared, location: ".", command: development.command }
 }
 
 function serverExecution(server: ServerExecution) {
-  return server.startCommand !== undefined ? { startCommand: server.startCommand } : { entryFile: server.entryFile }
+  if (server.command !== undefined) return { command: server.command }
+  if (server.worker !== undefined) return { worker: server.worker }
+  return { sandbox: server.sandbox }
 }
 
 function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: string) {
@@ -348,12 +350,17 @@ function launchValue(value: Config["launch"]): Config["launch"] {
   return value === undefined || value === true ? value : parseLaunch(value)
 }
 
-function execution(value: { startCommand?: unknown, entryFile?: unknown }, owner: string) {
-  const command = typeof value.startCommand === "string" && value.startCommand.trim().length > 0
-  const entry = typeof value.entryFile === "string" && value.entryFile.trim().length > 0
+function execution(value: { command?: unknown, worker?: unknown, sandbox?: unknown }, owner: string) {
+  const selected = ["command", "worker", "sandbox"].filter(name => {
+    const execution = value[name as keyof typeof value]
+    return typeof execution === "string" && execution.trim().length > 0
+  })
 
-  if (command === entry) throw new Error(`${owner} must declare exactly one non-empty startCommand or entryFile`)
-  if (entry && !contained(value.entryFile as string)) throw new Error(`${owner}'s entryFile must remain inside its Server directory`)
+  if (selected.length !== 1) throw new Error(`${owner} must declare exactly one non-empty command, worker, or sandbox`)
+  const name = selected[0] as "command" | "worker" | "sandbox"
+  if (name !== "command" && !contained(value[name] as string)) {
+    throw new Error(`${owner}'s ${name} entry must remain inside its Server directory`)
+  }
 }
 
 function contained(entry: string) {
@@ -389,6 +396,7 @@ function packageDefinition(config: Config, version: string) {
     categories: config.categories,
     keywords: config.keywords,
     website: config.website,
+    permissions: config.permissions,
     ...config.server && { server: {
       location: "server",
       start: config.server.start,
@@ -406,8 +414,7 @@ function packageDefinition(config: Config, version: string) {
       position: config.client.position,
       layer: config.client.layer,
       minimize: config.client.minimize,
-      maximize: config.client.maximize,
-      permissions: config.client.permissions
+      maximize: config.client.maximize
     } }
   }
 }

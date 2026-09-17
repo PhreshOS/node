@@ -43,8 +43,8 @@ test("Project derives one Server Endpoint execution mode without retaining the o
     identity: "worker-program",
     server: {
       location: "dist/server",
-      entryFile: "main.js",
-      development: { startCommand: "tsx source/server/main.ts" }
+      worker: "main.js",
+      development: { command: "tsx source/server/main.ts" }
     }
   }, { directory })
 
@@ -54,7 +54,7 @@ test("Project derives one Server Endpoint execution mode without retaining the o
     service: undefined,
     installCommand: undefined,
     uninstallCommand: undefined,
-    entryFile: "main.js"
+    worker: "main.js"
   })
   assert.deepEqual(project.developmentDefinition().server, {
     location: directory,
@@ -62,7 +62,7 @@ test("Project derives one Server Endpoint execution mode without retaining the o
     service: undefined,
     installCommand: undefined,
     uninstallCommand: undefined,
-    startCommand: "tsx source/server/main.ts"
+    command: "tsx source/server/main.ts"
   })
 })
 
@@ -111,9 +111,9 @@ test("Project returns the original development and installation generators", asy
 
   const project = Project.define({
     identity: "example",
+    permissions: { all: true },
     client: {
       location: "dist/client",
-      permissions: { all: true },
       development: { url: `http://localhost:${address.port}/` }
     }
   })
@@ -138,8 +138,8 @@ test("Project returns the original development and installation generators", asy
     assert.equal(await project.dev(system), development)
     assert.equal(await project.install(system), installation)
     assert.equal(definitions[0].client.location, `http://localhost:${address.port}/`)
-    assert.deepEqual(definitions[0].client.permissions, { all: true })
-    assert.deepEqual(definitions[1].client.permissions, { all: true })
+    assert.deepEqual(definitions[0].permissions, { all: true })
+    assert.deepEqual(definitions[1].permissions, { all: true })
     assert.equal(definitions[1].client.location.endsWith("/dist/client"), true)
   } finally {
     await new Promise((resolve, reject) => client.close(error => error ? reject(error) : resolve()))
@@ -355,7 +355,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     const created = await system.program.forceCreate({
       identity: "example",
       storage: join(home, "storage"),
-      server: { location: join(home, "server"), entryFile: "main.js" }
+      server: { location: join(home, "server"), worker: "main.js" }
     })
 
     assert.equal(await createdEvent, created)
@@ -397,7 +397,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     const replaced = await system.program.forceCreate({
       identity: "example",
       storage: join(home, "storage"),
-      server: { location: join(home, "server"), entryFile: "main.js" }
+      server: { location: join(home, "server"), worker: "main.js" }
     })
 
     assert(replaced instanceof Program)
