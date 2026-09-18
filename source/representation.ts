@@ -221,7 +221,7 @@ export default class SystemRepresentation {
       this.emit("session:end", parsed, parsed.reason)
     })
 
-    for (const event of ["move", "resize", "geometry", "change-title", "raise", "minimize", "maximize"] as const) {
+    for (const event of ["move", "resize", "geometry", "change-title", "change-header", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -390,11 +390,12 @@ export function processIdentityState(value: unknown): ProcessIdentityState {
 }
 
 function windowState(value: unknown): WindowState {
-  if (!record(value) || typeof value.title !== "string" || typeof value.depth !== "number" || typeof value.minimized !== "boolean" || typeof value.maximized !== "boolean") {
+  if (!record(value) || typeof value.title !== "string" || typeof value.header !== "boolean" || typeof value.depth !== "number" || typeof value.minimized !== "boolean" || typeof value.maximized !== "boolean") {
     throw new Error("The System returned an invalid Window")
   }
   return {
     title: value.title,
+    header: value.header,
     position: value.position as WindowState["position"],
     size: value.size as WindowState["size"],
     depth: value.depth,
@@ -410,12 +411,17 @@ function windowMessage(event: string, process: ProcessState) {
   if (event === "resize") return window.size
   if (event === "geometry") return { position: window.position, size: window.size }
   if (event === "change-title") return window.title
+  if (event === "change-header") return window.header
   if (event === "minimize") return window.minimized
   if (event === "maximize") return window.maximized
   return true
 }
 
-function camel(value: string) { return value === "change-title" ? "changeTitle" : value }
+function camel(value: string) {
+  if (value === "change-title") return "changeTitle"
+  if (value === "change-header") return "changeHeader"
+  return value
+}
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) }
 function exception(error: unknown) { return error instanceof Error ? error : new Error(String(error)) }
 function abortReason(signal: AbortSignal) { return signal.reason instanceof Error ? signal.reason : new Error("The operation was cancelled") }

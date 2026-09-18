@@ -768,13 +768,14 @@ class ClientEndpointHandle extends CoreClientEndpoint {
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "geometry", "minimize", "maximize", "changeTitle", "front"], (event, subscriber) => {
+    super(["move", "resize", "geometry", "minimize", "maximize", "changeTitle", "changeHeader", "front"], (event, subscriber) => {
       if (event === null) throw new Error("Window events are named")
       return representation(system).on(`window:${process.identity}:${event}`, subscriber)
     })
   }
 
   public async title() { return (await this.snapshot()).title }
+  public async header() { return (await this.snapshot()).header }
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
   public async minimized() { return (await this.snapshot()).minimized }
@@ -787,6 +788,7 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async minimize(minimized = true) { await this.change("minimize", minimized) }
   public async maximize(maximized = true) { await this.change("maximize", maximized) }
   public async changeTitle(title: string) { await this.change("change-title", title) }
+  public async changeHeader(header: boolean) { await this.change("change-header", header) }
   public async raise() { await this.change("raise") }
 
   private snapshot() {

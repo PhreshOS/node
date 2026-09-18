@@ -13,10 +13,10 @@ test("Window flags and geometry cross the owner boundary independently", async (
     reference: "program-reference", identity: "example", assetId: "example-assets",
     installed: false, name: "Example", version: null, description: null, hasAgent: false,
     server: null,
-    client: { start: true, service: false, title: null, position: null, size: null, layer: null, minimize: null, maximize: null }
+    client: { start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null }
   }
   const window = {
-    title: "Example", position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
+    title: "Example", header: true, position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
     layer: "window", depth: 1, minimized: false, maximized: false
   }
   const process = {
@@ -39,6 +39,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
       if (operation === "maximize") window.maximized = input
       else if (operation === "minimize") window.minimized = input
       else if (operation === "geometry") Object.assign(window, input)
+      else if (operation === "change-header") window.header = input
       else throw new Error("Unexpected Window operation: " + operation)
       const changed = { identity, window: { ...window } }
       await publish("/auth/process/" + operation, changed)
@@ -56,6 +57,10 @@ test("Window flags and geometry cross the owner boundary independently", async (
     await current.minimize()
     assert.equal(await current.minimized(), true)
     assert.equal(await current.maximized(), true)
+    const header = current.wait("changeHeader", 1000)
+    await current.changeHeader(false)
+    assert.equal(await header, false)
+    assert.equal(await current.header(), false)
 
     const geometry = { position: { x: 70, y: 80 }, size: { width: 700, height: 500 } }
     const changed = current.wait("geometry", 1000)

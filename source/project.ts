@@ -117,6 +117,7 @@ export class Project {
         start: client.start,
         service: client.service,
         title: config.client?.title,
+        header: config.client?.header,
         size: config.client?.size,
         position: config.client?.position,
         layer: config.client?.layer,
@@ -315,6 +316,8 @@ function validateConfig(config: Config) {
     if (declared.service !== undefined && typeof declared.service !== "boolean") throw new Error(`A declared ${half} Endpoint's service default must be true or false`)
   }
 
+  if (config.client?.header !== undefined && typeof config.client.header !== "boolean") throw new Error("A declared Client Endpoint's header default must be true or false")
+
   if (!(config.server && (config.server.start ?? true)) && !(config.client && (config.client.start ?? true))) {
     throw new Error("A Program's default Process must start a Server Endpoint, a Client Endpoint, or both")
   }
@@ -410,6 +413,7 @@ function packageDefinition(config: Config, version: string) {
       start: config.client.start,
       service: config.client.service,
       title: config.client.title,
+      header: config.client.header,
       size: config.client.size,
       position: config.client.position,
       layer: config.client.layer,
