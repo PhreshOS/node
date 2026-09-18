@@ -2,6 +2,7 @@ import type {
   ClientEndpoint,
   Connection,
   Endpoint,
+  ExecuteOperationSummary,
   Process,
   Program,
   ServerEndpoint,
@@ -32,6 +33,7 @@ const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnec
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
 const connections: Promise<Connection[]> = connected.connection.list()
 const sessions: Promise<Session[]> = connected.session.list()
+const execution: Promise<ExecuteOperationSummary[]> = connected.execute({ $domain: "operation", $operation: "list" })
 
 async function authenticationDomains() {
   const connection = (await connections)[0]
@@ -45,6 +47,7 @@ async function authenticationDomains() {
 
 void authenticationDomains
 void sessions
+void execution
 
 program.permissions.get("all")
 program.permissions.all()

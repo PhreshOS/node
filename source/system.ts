@@ -7,6 +7,7 @@ import {
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   Session as CoreSession,
+  execute as executeRequest,
   isServiceKey,
   parseEndpointReference,
   parseConnectionSnapshot,
@@ -17,6 +18,8 @@ import {
   type ClientDeclaration,
   type ConnectionEvents,
   type ConnectionSnapshot,
+  type ExecuteRequest,
+  type ExecuteResult,
   type EndpointLifecycle,
   type EndpointLifecycleEvents,
   type EndpointDeclaration,
@@ -111,6 +114,10 @@ export class System implements CoreSystem {
   public readonly session: SystemSession
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
+
+  public execute<Request extends ExecuteRequest>(request: Request): Promise<ExecuteResult<Request>> {
+    return executeRequest(this, request)
+  }
 
   public async *shell(command: string, options: ShellOptions = {}) {
     yield* shell(command, { ...options, signal: connectedSignal(this, options.signal) })
