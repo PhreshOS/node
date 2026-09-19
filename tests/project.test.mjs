@@ -69,7 +69,7 @@ test("a Client development command receives its assigned address", async context
     startup: true,
     client: {
       location: "dist/client",
-      development: { startCommand: "node client.mjs" }
+      devCommand: "node client.mjs"
     }
   }, { directory })
 
@@ -103,7 +103,7 @@ test("authoring defaults survive production, development, and packaging", async 
   const project = Project.define({
     identity: "example",
     ...defaults,
-    client: { location: "client", development: { url: "http://localhost:5200" } }
+    client: { location: "client", devUrl: "http://localhost:5200" }
   }, { directory })
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.startup, defaults.startup)
@@ -114,7 +114,8 @@ test("authoring defaults survive production, development, and packaging", async 
   assert.deepEqual(definition.startup, defaults.startup)
   assert.deepEqual(definition.launch, defaults.launch)
   assert.equal(definition.storage, undefined)
-  assert.equal(definition.client.development, undefined)
+  assert.equal(definition.client.devCommand, undefined)
+  assert.equal(definition.client.devUrl, undefined)
 })
 
 test("authoring validates consumed startup values and ignores additional properties", () => {
@@ -129,7 +130,7 @@ test("authoring preserves optional startup and icon launch decisions", () => {
   for (const value of [undefined, true]) {
     const project = Project.define({
       identity: "example", startup: value, launch: value,
-      client: { location: "client", development: { url: "http://localhost:5200" } }
+      client: { location: "client", devUrl: "http://localhost:5200" }
     })
     for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
       assert.equal(definition.startup, value)
@@ -143,7 +144,7 @@ test("a development definition uses the direct-run Client port by default", () =
     identity: "default-development-port",
     client: {
       location: "dist/client",
-      development: { startCommand: "vite" }
+      devCommand: "vite"
     }
   })
 

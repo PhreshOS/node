@@ -1,4 +1,4 @@
-import type { ClientDevelopment, ProgramProcessRunEvent } from "@phreshos/core"
+import type { ClientConfig, ProgramProcessRunEvent } from "@phreshos/core"
 import { spawn, type ChildProcess } from "node:child_process"
 import { connect, createServer } from "node:net"
 import { delimiter, join } from "node:path"
@@ -10,23 +10,23 @@ const pollingInterval = 200
 export default class DevelopmentClient {
   public readonly url: string
 
-  private readonly startCommand: string | null
+  private readonly command: string | null
   private readonly directory: string
-  private command: OwnedCommand | null = null
+  private commandProcess: OwnedCommand | null = null
   private controller: AbortController | null = null
   private releaseSignal: () => void = () => undefined
 
-  private constructor(url: string, startCommand: string | null, directory: string) {
+  private constructor(url: string, command: string | null, directory: string) {
     this.url = url
-    this.startCommand = startCommand
+    this.command = command
     this.directory = directory
   }
 
   /** Select the development address without starting the authored command. */
-  public static async prepare(development: ClientDevelopment, directory: string) {
-    const url = development.url ?? `http://localhost:${await availablePort()}/`
-    if (development.startCommand) await assertAvailable(url)
-    return new DevelopmentClient(url, development.startCommand ?? null, directory)
+  public static async prepare(client: ClientConfig, directory: string) {
+    const url = client.devUrl ?? `http://localhost:${await availablePort()}/`
+    if (client.devCommand) await assertAvailable(url)
+    return new DevelopmentClient(url, client.devCommand ?? null, directory)
   }
 
   /** Start and verify the Client beneath its System-created asset address. */
@@ -39,8 +39,8 @@ export default class DevelopmentClient {
     this.releaseSignal = forwardAbort(signal, controller)
 
     try {
-      if (this.startCommand) {
-        this.command = new OwnedCommand(this.startCommand, this.directory, {
+      if (this.command) {
+        this.commandProcess = new OwnedCommand(this.command, this.directory, {
           PHRESHOS_CLIENT_BASE: base,
           PHRESHOS_CLIENT_PORT: String(portOf(this.url))
         })
@@ -53,11 +53,11 @@ export default class DevelopmentClient {
   }
 
   public processSignal(fallback?: AbortSignal) {
-    return this.command ? this.controller?.signal : fallback
+    return this.commandProcess ? this.controller?.signal : fallback
   }
 
   public supervise(lifecycle: AsyncGenerator<ProgramProcessRunEvent, void, void>) {
-    if (!this.command) {
+    if (!this.commandProcess) {
       this.releaseSignal()
       return lifecycle
     }
@@ -67,7 +67,7 @@ export default class DevelopmentClient {
   public async dispose(reason: unknown) {
     this.releaseSignal()
     this.controller?.abort(reason)
-    await this.command?.stop()
+    await this.commandProcess?.stop()
   }
 
   private async waitUntilReady(url: string) {
@@ -76,7 +76,7 @@ export default class DevelopmentClient {
     while (Date.now() < deadline) {
       this.controller!.signal.throwIfAborted()
 
-      const exit = this.command?.exitResult()
+      const exit = this.commandProcess?.exitResult()
       if (exit) throw commandFailure(exit)
 
       try {
@@ -95,7 +95,7 @@ export default class DevelopmentClient {
 
   private async *supervisedLifecycle(lifecycle: AsyncGenerator<ProgramProcessRunEvent, void, void>) {
     const iterator = lifecycle[Symbol.asyncIterator]()
-    const command = this.command!
+    const command = this.commandProcess!
 
     try {
       while (true) {

@@ -2,8 +2,8 @@ import {
   isRelativeValue,
   parseLaunch,
   layers,
+  type ClientConfig,
   type Config,
-  type ClientDevelopment,
   type Position,
   type ProgramDefinition,
   type ProgramInstallOptions,
@@ -85,7 +85,7 @@ export class Project {
     const server = serverHalf(config.server, mode)
     const client = clientHalf(config.client, mode, developmentClientUrl)
 
-    if (mode === "development" && !config.server?.development && !config.client?.development) {
+    if (mode === "development" && !config.server?.devCommand && !config.client?.devCommand && !config.client?.devUrl) {
       throw new Error("Nothing here says how this Program is developed")
     }
 
@@ -162,25 +162,26 @@ export class Project {
 
   /** Prepare this Project's Client development source and return its Process lifecycle. */
   public async dev(system: SystemContract, options: ProjectRunOptions = {}) {
-    const development = this.config.client?.development
-    const startsClient = Boolean(development && (this.config.client?.start ?? true))
+    const client = this.config.client
+    const hasClientDevelopment = client?.devCommand !== undefined || client?.devUrl !== undefined
+    const startsClient = Boolean(hasClientDevelopment && (client?.start ?? true))
 
-    if (!startsClient || !development) return await this.run(system, this.developmentDefinition(), options)
+    if (!startsClient || !client) return await this.run(system, this.developmentDefinition(), options)
 
-    if (development.startCommand) return this.developmentRun(system, development, options)
+    if (client.devCommand) return this.developmentRun(system, client, options)
 
-    const prepared = await this.prepareDevelopment(system, development, options)
+    const prepared = await this.prepareDevelopment(system, client, options)
     return prepared.client.supervise(prepared.lifecycle)
   }
 
-  private async *developmentRun(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
-    const prepared = await this.prepareDevelopment(system, development, options)
+  private async *developmentRun(system: SystemContract, client: ClientConfig, options: ProjectRunOptions) {
+    const prepared = await this.prepareDevelopment(system, client, options)
 
     yield* prepared.client.supervise(prepared.lifecycle)
   }
 
-  private async prepareDevelopment(system: SystemContract, development: ClientDevelopment, options: ProjectRunOptions) {
-    const client = await DevelopmentClient.prepare(development, this.directory)
+  private async prepareDevelopment(system: SystemContract, declaration: ClientConfig, options: ProjectRunOptions) {
+    const client = await DevelopmentClient.prepare(declaration, this.directory)
     const program = await system.program.forceCreate(this.definition("development", client.url))
 
     try {
@@ -268,11 +269,11 @@ export interface Manifest {
 function serverHalf(half: Config["server"], mode: ProjectMode) {
   if (!half) return null
 
-  const { development, command, worker, sandbox, ...declared } = half
+  const { devCommand, command, worker, sandbox, ...declared } = half
 
-  if (mode === "production" || !development) return { ...declared, ...serverExecution({ command, worker, sandbox } as ServerExecution) }
+  if (mode === "production" || !devCommand) return { ...declared, ...serverExecution({ command, worker, sandbox } as ServerExecution) }
 
-  return { ...declared, location: ".", command: development.command }
+  return { ...declared, location: ".", command: devCommand }
 }
 
 function serverExecution(server: ServerExecution) {
@@ -283,9 +284,9 @@ function serverExecution(server: ServerExecution) {
 
 function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: string) {
   if (!half) return null
-  const { development, ...declared } = half
-  return mode === "development" && development
-    ? { ...declared, location: developmentUrl ?? development.url ?? `http://localhost:${defaultClientPort}/` }
+  const { devCommand, devUrl, ...declared } = half
+  return mode === "development" && (devCommand !== undefined || devUrl !== undefined)
+    ? { ...declared, location: developmentUrl ?? devUrl ?? `http://localhost:${defaultClientPort}/` }
     : declared
 }
 
@@ -323,23 +324,19 @@ function validateConfig(config: Config) {
   }
 
   if (config.server) execution(config.server, "A Server Endpoint")
-  if (config.server?.development) execution(config.server.development, "server.development")
+  if (config.server?.devCommand !== undefined && (typeof config.server.devCommand !== "string" || !config.server.devCommand.trim())) {
+    throw new Error("server.devCommand must be non-empty text")
+  }
 
   if (config.client?.layer !== undefined && !layers.includes(config.client.layer)) {
     throw new Error(`A Client Endpoint's layer must be one of ${layers.join(", ")}`)
   }
 
-  if (config.client?.development) {
-    const development = config.client.development
-    if (development.url !== undefined && !httpUrl(development.url)) {
-      throw new Error("client.development.url must be a valid HTTP or HTTPS URL")
-    }
-    if (development.startCommand !== undefined && (typeof development.startCommand !== "string" || !development.startCommand.trim())) {
-      throw new Error("client.development.startCommand must be non-empty text")
-    }
-    if (development.url === undefined && development.startCommand === undefined) {
-      throw new Error("client.development must declare a URL or start command")
-    }
+  if (config.client?.devUrl !== undefined && !httpUrl(config.client.devUrl)) {
+    throw new Error("client.devUrl must be a valid HTTP or HTTPS URL")
+  }
+  if (config.client?.devCommand !== undefined && (typeof config.client.devCommand !== "string" || !config.client.devCommand.trim())) {
+    throw new Error("client.devCommand must be non-empty text")
   }
 
   for (const [name, value] of [["size", config.client?.size], ["position", config.client?.position]] as const) {

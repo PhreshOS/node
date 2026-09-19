@@ -44,7 +44,7 @@ test("Project derives one Server Endpoint execution mode without retaining the o
     server: {
       location: "dist/server",
       worker: "main.js",
-      development: { command: "tsx source/server/main.ts" }
+      devCommand: "tsx source/server/main.ts"
     }
   }, { directory })
 
@@ -114,7 +114,7 @@ test("Project returns the original development and installation generators", asy
     permissions: { all: true },
     client: {
       location: "dist/client",
-      development: { url: `http://localhost:${address.port}/` }
+      devUrl: `http://localhost:${address.port}/`
     }
   })
   const development = (async function* () {})()
@@ -151,7 +151,7 @@ test("Project keeps an HTTP development Client Endpoint location as a runtime lo
     identity: "web-client",
     client: {
       location: "dist/client",
-      development: { url: "https://localhost.example/client/" }
+      devUrl: "https://localhost.example/client/"
     }
   })
 
