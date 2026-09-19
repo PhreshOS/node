@@ -58,7 +58,9 @@ import {
   type WritableAppearance,
   type Window,
   type WindowEvents,
-  type WindowGeometry
+  type WindowFrame,
+  type WindowGeometry,
+  type WindowTransaction
 } from "@phreshos/core"
 import { homedir } from "node:os"
 import { gatewayAddress } from "./address.js"
@@ -660,14 +662,23 @@ class EndpointOperations extends Events<{}, unknown> {
       endpoint,
       event
     }, (_received, payload) => subscriber(payload), impossible))
-    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, subscriber, impossible) => (
-      endpointLifecycle(system, owner, endpoint, event, subscriber, impossible)
-    ))
+    this.lifecycle = new Events<EndpointLifecycleEvents>(["start", "stop"], (event, subscriber, impossible) => {
+      try { this.requireEndpoint() }
+      catch (error) {
+        if (impossible) impossible(error instanceof Error ? error : new Error(String(error)))
+        return () => undefined
+      }
+      return endpointLifecycle(system, owner, endpoint, event, subscriber, impossible)
+    })
   }
 
-  public process() { return Promise.resolve(this.owner) }
+  public async process() {
+    this.requireEndpoint()
+    return this.owner
+  }
 
-  public async exists() {
+  public async running() {
+    this.requireEndpoint()
     return endpointState(this.system, this.owner, this.endpoint) !== null
   }
 
@@ -675,10 +686,12 @@ class EndpointOperations extends Events<{}, unknown> {
   public async stop() { await this.operation("stop") }
 
   public async waitReady(timeout?: number) {
+    this.requireEndpoint()
     await waitEndpointReady(this.system, this.owner, this.endpoint, timeout)
   }
 
   public async isService() {
+    this.requireEndpoint()
     return endpointState(this.system, this.owner, this.endpoint)?.service === true
   }
 
@@ -688,6 +701,12 @@ class EndpointOperations extends Events<{}, unknown> {
 
   private async operation(operation: "start" | "stop", launch?: ServerLaunch | ClientLaunch) {
     await representation(this.system).call(`/process/endpoint/${operation}`, this.owner.identity, this.endpoint, launch)
+  }
+
+  private requireEndpoint() {
+    const state = processState(this.system, this.owner)
+    const declared = this.endpoint === "server" ? state.serverEndpoint : state.clientEndpoint !== null
+    if (!declared) throw new Error(`This Program declared no ${this.endpoint === "server" ? "Server" : "Client"} Endpoint`)
   }
 }
 
@@ -716,7 +735,7 @@ class ServerEndpointHandle extends CoreServerEndpoint {
   }
 
   public process() { return this.base.process() }
-  public exists() { return this.base.exists() }
+  public running() { return this.base.running() }
   public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public isService() { return this.base.isService() }
   public start(launch?: ServerLaunch) { return this.base.start(launch) }
@@ -764,7 +783,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
   }
 
   public process() { return this.base.process() }
-  public exists() { return this.base.exists() }
+  public running() { return this.base.running() }
   public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public isService() { return this.base.isService() }
   public start(launch?: ClientLaunch) { return this.base.start(launch) }
@@ -775,7 +794,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "geometry", "minimize", "maximize", "changeTitle", "changeHeader", "front"], (event, subscriber) => {
+    super(["move", "resize", "geometry", "minimize", "maximize", "changeTitle", "changeHeader", "changeFrame", "front"], (event, subscriber) => {
       if (event === null) throw new Error("Window events are named")
       return representation(system).on(`window:${process.identity}:${event}`, subscriber)
     })
@@ -783,6 +802,8 @@ class SystemWindow extends Events<WindowEvents> implements Window {
 
   public async title() { return (await this.snapshot()).title }
   public async header() { return (await this.snapshot()).header }
+  public async frame() { return (await this.snapshot()).frame }
+  public async openingTransaction() { return (await this.snapshot()).transaction }
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
   public async minimized() { return (await this.snapshot()).minimized }
@@ -796,11 +817,13 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async maximize(maximized = true) { await this.change("maximize", maximized) }
   public async changeTitle(title: string) { await this.change("change-title", title) }
   public async changeHeader(header: boolean) { await this.change("change-header", header) }
+  public async changeFrame(frame: WindowFrame) { await this.change("change-frame", frame) }
+  public async changeOpeningTransaction(transaction: WindowTransaction) { await this.change("change-opening-transaction", transaction) }
   public async raise() { await this.change("raise") }
 
   private snapshot() {
-    const window = processState(this.system, this.process).client?.window
-    if (!window) throw new Error(`Process "${this.process.identity}" has no live Client Endpoint`)
+    const window = processState(this.system, this.process).clientEndpoint?.window
+    if (!window) throw new Error(`Process "${this.process.identity}" has no Client declaration`)
     return Promise.resolve(window)
   }
 
@@ -992,10 +1015,11 @@ function serviceState(system: System, key: ServiceKey) {
 }
 
 function frontWindow(system: System, process: ProcessHandle) {
-  const window = processState(system, process).client?.window
+  const owner = processState(system, process)
+  const window = owner.client ? owner.clientEndpoint?.window : null
   if (!window || window.minimized) return false
   return ![...representation(system).processes.values()].some(candidate => {
-    const other = candidate.client?.window
+    const other = candidate.client ? candidate.clientEndpoint?.window : null
     return other && !other.minimized && other.layer === window.layer && other.depth > window.depth
   })
 }

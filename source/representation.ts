@@ -3,6 +3,8 @@ import {
   parseConnectionSnapshot,
   parseProgramSnapshot,
   parseAppearance,
+  parseWindowFrame,
+  parseWindowTransaction,
   parseSessionSnapshot,
   parseSessionEndSnapshot,
   type Appearance,
@@ -28,8 +30,10 @@ export interface ProcessIdentityState {
 }
 
 export interface ProcessState extends ProcessIdentityState {
+  serverEndpoint: boolean
   server: { ready: boolean, service: boolean } | null
-  client: { service: boolean, sameOrigin: boolean, window: WindowState } | null
+  client: { service: boolean, sameOrigin: boolean } | null
+  clientEndpoint: { window: WindowState } | null
 }
 
 export type Observation =
@@ -221,7 +225,7 @@ export default class SystemRepresentation {
       this.emit("session:end", parsed, parsed.reason)
     })
 
-    for (const event of ["move", "resize", "geometry", "change-title", "change-header", "raise", "minimize", "maximize"] as const) {
+    for (const event of ["move", "resize", "geometry", "change-title", "change-header", "change-frame", "change-opening-transaction", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -286,6 +290,7 @@ export default class SystemRepresentation {
 
     current.server = incoming.server
     current.client = incoming.client
+    current.clientEndpoint = incoming.clientEndpoint
     this.emit(`endpoint:${current.reference}:${endpoint}:${running ? "start" : "stop"}`)
     this.emit(`process:${current.reference}:change`, current)
   }
@@ -308,9 +313,9 @@ export default class SystemRepresentation {
   private changeWindow(event: string, value: unknown) {
     if (!record(value) || typeof value.identity !== "string" || !record(value.window)) return
     const process = this.processes.get(value.identity)
-    if (!process?.client) return
-    process.client.window = windowState(value.window)
-    this.emit(`window:${process.identity}:${camel(event)}`, windowMessage(event, process))
+    if (!process?.clientEndpoint) return
+    process.clientEndpoint.window = windowState(value.window)
+    if (event !== "change-opening-transaction") this.emit(`window:${process.identity}:${camel(event)}`, windowMessage(event, process))
     this.emit(`process:${process.reference}:change`, process)
   }
 
@@ -355,11 +360,14 @@ function processState(value: unknown): ProcessState {
   return {
     ...identity,
     server: record(source.server) ? { ready: source.server.ready === true, service: source.server.service === true } : null,
+    serverEndpoint: source.serverEndpoint === true,
     client: record(source.client) ? {
       service: source.client.service === true,
-      sameOrigin: source.client.sameOrigin === true,
-      window: windowState(source.client.window)
-    } : null
+      sameOrigin: source.client.sameOrigin === true
+    } : null,
+    clientEndpoint: source.clientEndpoint === null
+      ? null
+      : { window: windowState((source.clientEndpoint as Record<string, unknown>).window) }
   }
 }
 
@@ -396,6 +404,8 @@ function windowState(value: unknown): WindowState {
   return {
     title: value.title,
     header: value.header,
+    frame: parseWindowFrame(value.frame),
+    transaction: parseWindowTransaction(value.transaction),
     position: value.position as WindowState["position"],
     size: value.size as WindowState["size"],
     depth: value.depth,
@@ -406,12 +416,13 @@ function windowState(value: unknown): WindowState {
 }
 
 function windowMessage(event: string, process: ProcessState) {
-  const window = process.client!.window
+  const window = process.clientEndpoint!.window
   if (event === "move") return window.position
   if (event === "resize") return window.size
   if (event === "geometry") return { position: window.position, size: window.size }
   if (event === "change-title") return window.title
   if (event === "change-header") return window.header
+  if (event === "change-frame") return window.frame
   if (event === "minimize") return window.minimized
   if (event === "maximize") return window.maximized
   return true
@@ -420,6 +431,7 @@ function windowMessage(event: string, process: ProcessState) {
 function camel(value: string) {
   if (value === "change-title") return "changeTitle"
   if (value === "change-header") return "changeHeader"
+  if (value === "change-frame") return "changeFrame"
   return value
 }
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) }

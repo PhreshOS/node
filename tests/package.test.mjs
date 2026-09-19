@@ -11,6 +11,7 @@ test("package contract", async () => {
   const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..")
   const temporary = mkdtempSync(join(tmpdir(), "phreshos-node-package-"))
   const cache = join(temporary, "npm-cache")
+  const coreCandidate = process.env.PHRESHOS_CORE_PACKAGE
   const corePackage = `@phreshos/core@${manifest.devDependencies["@phreshos/core"]}`
 
   assert.equal(
@@ -48,7 +49,7 @@ test("package contract", async () => {
     execFileSync("npm", [
       "install", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock",
       archive,
-      corePackage,
+      coreCandidate ?? corePackage,
       `@types/node@${manifest.devDependencies["@types/node"]}`
     ], {
       cwd: consumer,

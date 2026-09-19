@@ -11,7 +11,7 @@ test("saved launch get and set cross the owner boundary without launching", asyn
   const home = await mkdtemp(join(tmpdir(), "phresh-launch-"))
   const program = { reference: "reference", identity: "example", assetId: "assets", installed: false,
     name: "Example", version: null, description: null, hasAgent: false, server: null,
-    client: { start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null } }
+    client: { start: true, service: false, title: null, header: null, frame: null, transaction: null, position: null, size: null, layer: null, minimize: null, maximize: null } }
   let saved = null
   const gateway = createGateway(gatewayAddress(home), {
     snapshot: { linkManager: { appearance: { key: "appearance", value: defaultAppearance } },

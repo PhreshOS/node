@@ -13,16 +13,16 @@ test("Window flags and geometry cross the owner boundary independently", async (
     reference: "program-reference", identity: "example", assetId: "example-assets",
     installed: false, name: "Example", version: null, description: null, hasAgent: false,
     server: null,
-    client: { start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null }
+    client: { start: true, service: false, title: null, header: null, frame: null, transaction: null, position: null, size: null, layer: null, minimize: null, maximize: null }
   }
   const window = {
-    title: "Example", header: true, position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
+    title: "Example", header: true, frame: true, transaction: false, position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
     layer: "window", depth: 1, minimized: false, maximized: false
   }
   const process = {
     reference: "process-reference", identity: "process", name: "main", program: "example",
-    parent: null, options: {}, startedAt: new Date(), server: null,
-    client: { service: false, window }
+    parent: null, options: {}, startedAt: new Date(), serverEndpoint: false, server: null,
+    client: null, clientEndpoint: { window }
   }
   const gateway = createGateway(gatewayAddress(home), {
     snapshot: {
@@ -49,7 +49,12 @@ test("Window flags and geometry cross the owner boundary independently", async (
   await gateway.listen()
   const system = await System.connect(home)
   try {
-    const current = (await system.process.find("process")).client.window
+    const owner = await system.process.find("process")
+    assert(owner)
+    assert.equal(await owner.client.running(), false)
+    assert.equal(await owner.client.process(), owner)
+
+    const current = owner.client.window
     const maximized = current.wait("maximize", 1000)
     await current.maximize()
     assert.equal(await maximized, true)

@@ -275,8 +275,10 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     parent: null,
     options: {},
     startedAt: new Date(),
+    serverEndpoint: true,
     server: null,
-    client: null
+    client: null,
+    clientEndpoint: null
   }
   const processRecord = {
     reference: "process-reference",
@@ -286,8 +288,10 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     parent: parentRecord,
     options: { mode: "test" },
     startedAt: new Date(),
+    serverEndpoint: true,
     server: { ready: true, service: false },
-    client: null
+    client: null,
+    clientEndpoint: null
   }
   let creations = 0
   const server = createGateway(address, {
@@ -390,6 +394,8 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert(retainedParent instanceof Process)
     assert.equal(retainedParent.identity, parentRecord.identity)
     assert.equal(await retainedParent.exited(), true)
+    await assert.rejects(retainedParent.server.running(), /no longer exists/)
+    await assert.rejects(retainedParent.client.running(), /no longer exists/)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(run.next(), /cancelled by test/)
@@ -434,8 +440,10 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     parent: null,
     options: {},
     startedAt: new Date(),
+    serverEndpoint: true,
     server: { ready: true, service: false },
-    client: null
+    client: null,
+    clientEndpoint: null
   }
   let followed
   let confirmUnfollow
@@ -465,6 +473,13 @@ test("Endpoint observations remain live across the owner LinkManager connection"
   try {
     const process = await system.process.find(processRecord.identity)
     assert(process)
+    assert.equal(await process.server.running(), true)
+    assert.equal(await process.server.process(), process)
+    await assert.rejects(process.client.running(), /declared no Client Endpoint/)
+    await assert.rejects(process.client.process(), /declared no Client Endpoint/)
+    const stopUnavailableLifecycle = process.client.lifecycle.subscribe("start", () => undefined)
+    stopUnavailableLifecycle()
+    await assert.rejects(process.client.lifecycle.wait("start", 100), /declared no Client Endpoint/)
 
     const message = new Promise(resolve => {
       const stop = process.server.subscribe("changed", value => {
