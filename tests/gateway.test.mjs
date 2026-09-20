@@ -161,6 +161,7 @@ test("Project keeps an HTTP development Client Endpoint location as a runtime lo
 test("System.connect exposes the shared System contract over one owner-local address", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-gateway-"))
   const address = gatewayAddress(home)
+  const requestedServiceIconSizes = []
   const server = createGateway(address, {
     snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
@@ -169,8 +170,16 @@ test("System.connect exposes the shared System contract over one owner-local add
         processManager: { processes: [] }
       }
     },
-    route({ event }) {
+    route({ event, values }) {
       if (event === "/auth/uploads/access") return { path: join(home, "uploads"), limit: 1024 }
+      if (event === "/auth/process/service/list" || event === "/auth/process/service/search") {
+        return [{ program: "example", process: "main", endpoint: "server" }]
+      }
+      if (event === "/auth/process/service/available") return true
+      if (event === "/auth/process/service/program-metadata") {
+        requestedServiceIconSizes.push(values[1])
+        return { name: "Example", version: "0.0.0", icon: [137, 80, 78, 71] }
+      }
     }
   })
 
@@ -191,27 +200,36 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(await system.uploads.path(), join(home, "uploads"))
     assert.deepEqual(await system.appearance.snapshot(), defaultAppearance)
 
-    const serverService = system.service({ program: "example", process: "main", endpoint: "server" })
-    const sameServerService = system.service({ program: "example", process: "main", endpoint: "server" })
-    const clientService = system.service({ program: "example", process: "main", endpoint: "client" })
-    const exactService = system.service({ process: "1f4b222c-25d7-4ba8-85e5-d5e59cfe0928", endpoint: "server" })
+    const serverService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })
+    const sameServerService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })
+    const clientService = system.service.prepare({ program: "example", process: "main", endpoint: "client" })
 
     assert.equal(serverService, sameServerService)
-    assert.equal(exactService, system.service({ process: "1f4b222c-25d7-4ba8-85e5-d5e59cfe0928", endpoint: "server" }))
-    assert.throws(() => system.service({ process: "main", endpoint: "server" }), /complete service key/)
+    assert.throws(() => system.service.prepare({ process: "main", endpoint: "server" }), /complete Service address/)
     assert(serverService instanceof Service)
     assert(serverService instanceof ServerService)
     assert.equal("channel" in serverService, false)
     assert.equal("name" in serverService, false)
-    assert.equal(typeof serverService.exists, "function")
+    assert.equal(typeof serverService.available, "function")
+    assert.equal(typeof serverService.programMetadata, "function")
     assert.equal(typeof serverService.publish, "function")
     assert.equal(typeof serverService.waitReady, "function")
     assert.equal(typeof serverService.lifecycle.subscribe, "function")
     assert(clientService instanceof Service)
     assert(clientService instanceof ClientService)
-    assert.equal(typeof clientService.exists, "function")
+    assert.equal(typeof clientService.available, "function")
     assert.equal(typeof clientService.publish, "function")
     assert.equal(typeof clientService.waitReady, "function")
+    assert.deepEqual((await system.service.list()).map(service => service.address()), [serverService.address()])
+    assert.deepEqual((await system.service.search("main")).map(service => service.address()), [serverService.address()])
+    assert.equal(await serverService.available(), true)
+    await serverService.programMetadata()
+    const metadata = await serverService.programMetadata({ icon: "small" })
+    assert.deepEqual(requestedServiceIconSizes, ["medium", "small"])
+    assert.equal(metadata.name, "Example")
+    assert.equal(metadata.version, "0.0.0")
+    assert.equal(metadata.icon.type, "image/png")
+    assert.deepEqual([...new Uint8Array(await metadata.icon.arrayBuffer())], [137, 80, 78, 71])
   } finally {
     await system.disconnect()
     await server.close()
@@ -260,7 +278,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assetId: "00000000-0000-4000-8000-000000000001",
     installed: false,
     name: "Example",
-    version: null,
+    version: "0.0.0",
     description: null,
     hasAgent: true,
     server: { start: true, service: false },
@@ -426,7 +444,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     assetId: "00000000-0000-4000-8000-000000000001",
     installed: true,
     name: "Example",
-    version: null,
+    version: "0.0.0",
     description: null,
     hasAgent: false,
     server: { start: true, service: false },

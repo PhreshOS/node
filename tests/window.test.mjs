@@ -11,7 +11,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
   const home = await mkdtemp(join(tmpdir(), "phresh-window-"))
   const program = {
     reference: "program-reference", identity: "example", assetId: "example-assets",
-    installed: false, name: "Example", version: null, description: null, hasAgent: false,
+    installed: false, name: "Example", version: "0.0.0", description: null, hasAgent: false,
     server: null,
     client: { start: true, service: false, title: null, header: null, frame: null, transaction: null, position: null, size: null, layer: null, minimize: null, maximize: null }
   }
@@ -38,11 +38,18 @@ test("Window flags and geometry cross the owner boundary independently", async (
       const operation = event.split("/").at(-1)
       if (operation === "maximize") window.maximized = input
       else if (operation === "minimize") window.minimized = input
-      else if (operation === "geometry") Object.assign(window, input)
-      else if (operation === "change-header") window.header = input
+      else if (operation === "set-geometry") {
+        window.position = { x: input.x, y: input.y }
+        window.size = { width: input.width, height: input.height }
+      }
+      else if (operation === "set-header") window.header = input
       else throw new Error("Unexpected Window operation: " + operation)
       const changed = { identity, window: { ...window } }
-      await publish("/auth/process/" + operation, changed)
+      if (operation === "set-geometry") {
+        await publish("/auth/process/move", changed)
+        await publish("/auth/process/resize", changed)
+      } else if (operation === "set-header") await publish("/auth/process/change-header", changed)
+      else await publish("/auth/process/" + operation, changed)
       return changed
     }
   })
@@ -63,22 +70,24 @@ test("Window flags and geometry cross the owner boundary independently", async (
     assert.equal(await current.minimized(), true)
     assert.equal(await current.maximized(), true)
     const header = current.wait("changeHeader", 1000)
-    await current.changeHeader(false)
+    await current.setHeader(false)
     assert.equal(await header, false)
     assert.equal(await current.header(), false)
 
-    const geometry = { position: { x: 70, y: 80 }, size: { width: 700, height: 500 } }
-    const changed = current.wait("geometry", 1000)
+    const geometry = { x: 70, y: 80, width: 700, height: 500 }
+    const moved = current.wait("move", 1000)
+    const resized = current.wait("resize", 1000)
     await current.setGeometry(geometry)
-    assert.deepEqual(await changed, geometry)
+    assert.deepEqual(await moved, { x: geometry.x, y: geometry.y })
+    assert.deepEqual(await resized, { width: geometry.width, height: geometry.height })
     assert.equal(await current.minimized(), true)
     assert.equal(await current.maximized(), true)
     await current.minimize(false)
     assert.equal(await current.maximized(), true)
     await current.maximize(false)
     assert.equal(await current.maximized(), false)
-    assert.deepEqual(await current.position(), geometry.position)
-    assert.deepEqual(await current.size(), geometry.size)
+    assert.deepEqual(await current.position(), { x: geometry.x, y: geometry.y })
+    assert.deepEqual(await current.size(), { width: geometry.width, height: geometry.height })
   } finally {
     await system.disconnect()
     await gateway.close()

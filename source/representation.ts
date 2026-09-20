@@ -10,7 +10,7 @@ import {
   type Appearance,
   type ProcessSnapshot,
   type ProgramSnapshot,
-  type ServiceKey,
+  type ServiceAddress,
   type WindowLayer,
   type WindowState as CoreWindowState
 } from "@phreshos/core"
@@ -39,7 +39,7 @@ export interface ProcessState extends ProcessIdentityState {
 export type Observation =
   | Readonly<{ scope: "endpoint", process: string, endpoint: "server" | "client", event: string | null }>
   | Readonly<{ scope: "traffic", process: string, endpoint: "server" | "client", kind: "publish" | "ask" | "answer", event: string | null }>
-  | Readonly<{ scope: "service", key: ServiceKey, kind: "events" | "lifecycle", event: string | null }>
+  | Readonly<{ scope: "service", address: ServiceAddress, kind: "events" | "lifecycle", event: string | null }>
 
 type Listener = (...values: unknown[]) => unknown
 
@@ -203,6 +203,8 @@ export default class SystemRepresentation {
     subscribe("/auth/process/client-stop", (identity, value) => this.changeEndpoint(identity, "client", value, false))
     subscribe("/auth/process/client-access", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/exited", (value, code, signal) => this.exitProcess(value, code, signal))
+    subscribe("/auth/process/service-available", value => this.serviceEvent("available", value))
+    subscribe("/auth/process/service-unavailable", value => this.serviceEvent("unavailable", value))
 
     subscribe("/auth/connection/create", value => this.connectionEvent("create", value))
     subscribe("/auth/connection/disconnect", value => this.connectionEvent("disconnect", value))
@@ -225,7 +227,7 @@ export default class SystemRepresentation {
       this.emit("session:end", parsed, parsed.reason)
     })
 
-    for (const event of ["move", "resize", "geometry", "change-title", "change-header", "change-frame", "change-opening-transaction", "raise", "minimize", "maximize"] as const) {
+    for (const event of ["move", "resize", "change-title", "change-header", "change-frame", "change-transaction", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -240,6 +242,10 @@ export default class SystemRepresentation {
     const session = parseSessionSnapshot(value)
     this.emit(`session:${session.identity}:${event}`)
     this.emit(`session:${event}`, session)
+  }
+
+  private serviceEvent(event: "available" | "unavailable", value: unknown) {
+    this.emit(`service:${event}`, value)
   }
 
   private arriveProgram(event: "create" | "install", value: unknown) {
@@ -419,10 +425,10 @@ function windowMessage(event: string, process: ProcessState) {
   const window = process.clientEndpoint!.window
   if (event === "move") return window.position
   if (event === "resize") return window.size
-  if (event === "geometry") return { position: window.position, size: window.size }
   if (event === "change-title") return window.title
   if (event === "change-header") return window.header
   if (event === "change-frame") return window.frame
+  if (event === "change-transaction") return window.transaction
   if (event === "minimize") return window.minimized
   if (event === "maximize") return window.maximized
   return true
@@ -432,6 +438,7 @@ function camel(value: string) {
   if (value === "change-title") return "changeTitle"
   if (value === "change-header") return "changeHeader"
   if (value === "change-frame") return "changeFrame"
+  if (value === "change-transaction") return "changeTransaction"
   return value
 }
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) }

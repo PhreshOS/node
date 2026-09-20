@@ -9,7 +9,7 @@ import type {
   Session,
   System as CoreSystem,
   Service,
-  ServiceKey
+  ServiceAddress
 } from "@phreshos/core"
 import type { System } from "../source/main.js"
 
@@ -20,7 +20,7 @@ declare const canonicalProgram: Program
 declare const endpoint: Endpoint<{ change: number }, string>
 declare const server: ServerEndpoint<{ change: number }, string>
 declare const client: ClientEndpoint<{ change: number }, string>
-declare const serviceEndpoint: ServiceKey["endpoint"]
+declare const serviceEndpoint: ServiceAddress["endpoint"]
 
 const shared: CoreSystem = connected
 const sameProgram: Program = program
@@ -28,7 +28,7 @@ const nodeProgram: Program = canonicalProgram
 const sameEndpoint: Endpoint<{ change: number }, string> = endpoint
 const sameServer: ServerEndpoint<{ change: number }, string> = server
 const sameClient: ClientEndpoint<{ change: number }, string> = client
-const service: Service = connected.service({ program: "example", process: "main", endpoint: serviceEndpoint })
+const service: Service = connected.service.prepare({ program: "example", process: "main", endpoint: serviceEndpoint })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
 const connections: Promise<Connection[]> = connected.connection.list()
