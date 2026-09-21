@@ -100,19 +100,35 @@ test("authoring defaults survive production, development, and packaging", async 
     startup: { options: { document: "welcome.txt" } },
     launch: { options: { document: "icon.txt" } }
   }
+  const clientDefaults = {
+    frame: {
+      radius: "full",
+      color: "primary",
+      material: { opacity: 0.7 }
+    },
+    transaction: { duration: 240, easing: "ease-out" }
+  }
   const project = Project.define({
     identity: "example",
     ...defaults,
-    client: { location: "client", devUrl: "http://localhost:5200" }
+    client: {
+      location: "client",
+      devUrl: "http://localhost:5200",
+      ...clientDefaults
+    }
   }, { directory })
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.startup, defaults.startup)
     assert.deepEqual(definition.launch, defaults.launch)
+    assert.deepEqual(definition.client.frame, clientDefaults.frame)
+    assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
   assert.deepEqual(definition.startup, defaults.startup)
   assert.deepEqual(definition.launch, defaults.launch)
+  assert.deepEqual(definition.client.frame, clientDefaults.frame)
+  assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   assert.equal(definition.storage, undefined)
   assert.equal(definition.client.devCommand, undefined)
   assert.equal(definition.client.devUrl, undefined)
@@ -124,6 +140,8 @@ test("authoring validates consumed startup values and ignores additional propert
   assert.throws(() => Project.define({ ...config, launch: null }), /object/)
   assert.throws(() => Project.define({ ...config, launch: false }), /object/)
   assert.throws(() => Project.define({ ...config, startup: false }), /object/)
+  assert.throws(() => Project.define({ ...config, client: { ...config.client, frame: { radius: -1 } } }), /frame/i)
+  assert.throws(() => Project.define({ ...config, client: { ...config.client, transaction: -1 } }), /transaction/i)
 })
 
 test("authoring preserves optional startup and icon launch decisions", () => {
