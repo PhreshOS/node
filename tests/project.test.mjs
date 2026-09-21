@@ -66,7 +66,7 @@ test("a Client development command receives its assigned address", async context
 
   const project = Project.define({
     identity: "development-program",
-    startup: true,
+    installLaunch: true,
     client: {
       location: "dist/client",
       devCommand: "node client.mjs"
@@ -86,7 +86,7 @@ test("a Client development command receives its assigned address", async context
   assert.equal(environment.base, `/program/${assetId}/assets/`)
   assert.equal(Number.isInteger(environment.port), true)
   assert.equal(definition.client.location, `http://localhost:${environment.port}/`)
-  assert.equal(definition.startup, true)
+  assert.equal(definition.installLaunch, true)
   await assert.rejects(fetch(definition.client.location))
 })
 
@@ -97,8 +97,7 @@ test("authoring defaults survive production, development, and packaging", async 
   await writeFile(join(directory, "client", "index.html"), "<!doctype html>")
   await writeFile(join(directory, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }))
   const defaults = {
-    startup: { options: { document: "welcome.txt" } },
-    launch: { options: { document: "icon.txt" } }
+    installLaunch: { options: { document: "welcome.txt" } }
   }
   const clientDefaults = {
     frame: {
@@ -118,15 +117,13 @@ test("authoring defaults survive production, development, and packaging", async 
     }
   }, { directory })
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
-    assert.deepEqual(definition.startup, defaults.startup)
-    assert.deepEqual(definition.launch, defaults.launch)
+    assert.deepEqual(definition.installLaunch, defaults.installLaunch)
     assert.deepEqual(definition.client.frame, clientDefaults.frame)
     assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
-  assert.deepEqual(definition.startup, defaults.startup)
-  assert.deepEqual(definition.launch, defaults.launch)
+  assert.deepEqual(definition.installLaunch, defaults.installLaunch)
   assert.deepEqual(definition.client.frame, clientDefaults.frame)
   assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   assert.equal(definition.storage, undefined)
@@ -134,25 +131,23 @@ test("authoring defaults survive production, development, and packaging", async 
   assert.equal(definition.client.devUrl, undefined)
 })
 
-test("authoring validates consumed startup values and ignores additional properties", () => {
+test("authoring validates consumed install launch values and ignores additional properties", () => {
   const config = { identity: "example", client: { location: "client" } }
-  assert.deepEqual(Project.define({ ...config, startup: { client: { extension: true } } }).productionDefinition().startup, { client: {} })
-  assert.throws(() => Project.define({ ...config, launch: null }), /object/)
-  assert.throws(() => Project.define({ ...config, launch: false }), /object/)
-  assert.throws(() => Project.define({ ...config, startup: false }), /object/)
+  assert.deepEqual(Project.define({ ...config, installLaunch: { client: { extension: true } } }).productionDefinition().installLaunch, { client: {} })
+  assert.throws(() => Project.define({ ...config, installLaunch: null }), /object/)
+  assert.throws(() => Project.define({ ...config, installLaunch: false }), /object/)
   assert.throws(() => Project.define({ ...config, client: { ...config.client, frame: { radius: -1 } } }), /frame/i)
   assert.throws(() => Project.define({ ...config, client: { ...config.client, transaction: -1 } }), /transaction/i)
 })
 
-test("authoring preserves optional startup and icon launch decisions", () => {
+test("authoring preserves optional post-install launch decisions", () => {
   for (const value of [undefined, true]) {
     const project = Project.define({
-      identity: "example", startup: value, launch: value,
+      identity: "example", installLaunch: value,
       client: { location: "client", devUrl: "http://localhost:5200" }
     })
     for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
-      assert.equal(definition.startup, value)
-      assert.equal(definition.launch, value)
+      assert.equal(definition.installLaunch, value)
     }
   }
 })

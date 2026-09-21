@@ -34,6 +34,9 @@ const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof Sy
 const connections: Promise<Connection[]> = connected.connection.list()
 const sessions: Promise<Session[]> = connected.session.list()
 const execution: Promise<ExecuteOperationSummary[]> = connected.execute({ $domain: "operation", $operation: "list" })
+const appearanceUpdate: Promise<void> = connected.appearance.update({ colors: { dark: { danger: "#ff0000" } } })
+const programDefinition = program.definition()
+const serviceIcon = service.programIcon("small")
 
 async function authenticationDomains() {
   const connection = (await connections)[0]
@@ -48,11 +51,18 @@ async function authenticationDomains() {
 void authenticationDomains
 void sessions
 void execution
+void appearanceUpdate
+void programDefinition
+void serviceIcon
 
 program.permissions.get("all")
 program.permissions.all()
 program.permissions.allows("network", ["https://api.example.com"])
-program.permissions.set("all", true)
+program.permissions.allow("all")
+program.permissions.deny("network")
+program.permissions.request("uploads")
+program.permissions.timeout(120_000).request("network", ["https://api.example.com"])
+// @ts-expect-error Permission assignments are replaced or denied; they are never deleted.
 program.permissions.delete("all")
 
 declare const process: Process

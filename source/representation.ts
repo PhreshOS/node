@@ -194,6 +194,7 @@ export default class SystemRepresentation {
     subscribe("/auth/program/install", value => this.arriveProgram("install", value))
     subscribe("/auth/program/uninstall", (value, purge) => this.uninstallProgram(value, purge === true))
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
+    subscribe("/auth/program/pinned", (value, pinned) => this.pinProgram(value, pinned === true))
 
     subscribe("/auth/process/created", value => this.createProcess(value))
     subscribe("/auth/process/server-ready", identity => this.serverReady(identity))
@@ -270,6 +271,13 @@ export default class SystemRepresentation {
     this.programs.delete(value)
     this.emit(`program:${program.reference}:forget`)
     this.emit("program:forget", program)
+  }
+
+  private pinProgram(value: unknown, pinned: boolean) {
+    const program = programState(value)
+    this.programs.set(program.identity, program)
+    this.emit(`program:${program.reference}:pinned`, pinned)
+    this.emit("program:pinned", program, pinned)
   }
 
   private createProcess(value: unknown) {

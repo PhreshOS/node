@@ -11,10 +11,10 @@ import {
   isServiceAddress,
   parseEndpointReference,
   parseConnectionSnapshot,
-  parseLaunch,
+  parseProgramDefinition,
   parseSessionSnapshot,
-  type ProgramLaunch as CoreProgramLaunch,
   type Appearance,
+  type AppearanceUpdate,
   type ClientDeclaration,
   type ConnectionEvents,
   type ConnectionSnapshot,
@@ -25,7 +25,6 @@ import {
   type ServiceLifecycle,
   type ServiceLifecycleEvents,
   type ServiceProgramMetadata,
-  type ServiceProgramMetadataOptions,
   type EndpointDeclaration,
   type Launch,
   type ClientLaunch,
@@ -224,7 +223,7 @@ class SystemAppearance extends Events<{ change: Appearance }> {
     return representation(this.system).appearance
   }
 
-  public async update(appearance: Appearance) {
+  public async update(appearance: AppearanceUpdate) {
     await representation(this.system).call("/appearance/update", appearance)
   }
 }
@@ -373,7 +372,7 @@ class ServiceRegistry extends Events<SystemServiceEvents, never> implements Syst
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
   public constructor(private readonly system: System) {
-    super(["create", "forget", "install", "uninstall"], (event, subscriber) => {
+    super(["create", "forget", "install", "uninstall", "pinned"], (event, subscriber) => {
       if (event === null) throw new Error("System Program events are named")
       return representation(system).on(`program:${event}`, (...values) => subscriber(this.event(event, values)))
     })
@@ -404,7 +403,9 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
 
   private event(event: string, values: unknown[]) {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
-    return event === "uninstall" ? { program, purge: values[1] === true } : program
+    if (event === "uninstall") return { program, purge: values[1] === true }
+    if (event === "pinned") return { program, pinned: values[1] === true }
+    return program
   }
 }
 
@@ -420,7 +421,6 @@ class ProgramHandle extends CoreProgram {
   public readonly logs: ProgramSql
   public readonly database: ProgramSql
   public readonly startup: ProgramStartup
-  public readonly launch: CoreProgramLaunch
   public readonly permissions
   private snapshot: ProgramState
 
@@ -430,11 +430,12 @@ class ProgramHandle extends CoreProgram {
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall"], (event, subscriber) => {
+    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pinned"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
         if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
         else if (event === "uninstall") subscriber({ purge: values[0] === true })
+        else if (event === "pinned") subscriber(values[0] === true)
         else subscriber(undefined)
       })
     })
@@ -449,7 +450,6 @@ class ProgramHandle extends CoreProgram {
     this.logs = programSql(call, address, "logs")
     this.database = programSql(call, address, "database")
     this.startup = new ProgramStartup(system, this)
-    this.launch = new ProgramLaunch(system, this)
     this.permissions = programPermissions(call, address)
   }
 
@@ -466,6 +466,10 @@ class ProgramHandle extends CoreProgram {
   }
   public get client(): ClientDeclaration | null { return this.snapshot.client }
 
+  public pinned() { return representation(this.system).call<boolean>("/program/pinned", this.address(), "get") }
+  public async pin() { await representation(this.system).call("/program/pinned", this.address(), "pin") }
+  public async unpin() { await representation(this.system).call("/program/pinned", this.address(), "unpin") }
+
   public update(snapshot: ProgramState) {
     if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
     this.snapshot = snapshot
@@ -475,6 +479,10 @@ class ProgramHandle extends CoreProgram {
     const value = await representation(this.system).call<unknown>("/program/icon", this.address(), size)
     if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid Program icon")
     return new Blob([Uint8Array.from(value)], { type: "image/png" })
+  }
+
+  public async definition() {
+    return parseProgramDefinition(await representation(this.system).call<unknown>("/program/definition", this.address()))
   }
 
   public async agent() {
@@ -552,19 +560,6 @@ class ProgramHandle extends CoreProgram {
   }
 
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
-}
-
-class ProgramLaunch implements CoreProgramLaunch {
-  public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
-
-  public async get() {
-    const value = await representation(this.system).call<unknown>("/program/launch", this.program.address(), "get")
-    return value === null ? null : parseLaunch(value)
-  }
-
-  public async set(launch: Launch) {
-    await representation(this.system).call("/program/launch", this.program.address(), "set", parseLaunch(launch))
-  }
 }
 
 class ProgramStartup {
@@ -862,10 +857,14 @@ class ServiceBase {
     await representation(this.system).call("/process/service/wait-ready", this.serviceAddress, timeout)
   }
 
-  public async programMetadata(options: ServiceProgramMetadataOptions = {}) {
-    const iconSize = options.icon ?? "medium"
-    const value = await representation(this.system).call<unknown>("/process/service/program-metadata", this.serviceAddress, iconSize)
+  public async programMetadata() {
+    const value = await representation(this.system).call<unknown>("/process/service/program-metadata", this.serviceAddress)
     return parseServiceProgramMetadata(value)
+  }
+
+  public async programIcon(size: ProgramIconSize = "medium") {
+    const value = await representation(this.system).call<unknown>("/process/service/program-icon", this.serviceAddress, size)
+    return parseServiceProgramIcon(value)
   }
 
   public publish(event: string, payload?: unknown) {
@@ -894,7 +893,8 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
-  public override programMetadata(options?: ServiceProgramMetadataOptions) { return this.base.programMetadata(options) }
+  public override programMetadata() { return this.base.programMetadata() }
+  public override programIcon(size?: ProgramIconSize) { return this.base.programIcon(size) }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
@@ -928,7 +928,8 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
-  public override programMetadata(options?: ServiceProgramMetadataOptions) { return this.base.programMetadata(options) }
+  public override programMetadata() { return this.base.programMetadata() }
+  public override programIcon(size?: ProgramIconSize) { return this.base.programIcon(size) }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
@@ -1038,18 +1039,20 @@ function parseServiceAddress(value: unknown): ServiceAddress {
 function parseServiceProgramMetadata(value: unknown): ServiceProgramMetadata {
   if (!value || typeof value !== "object") throw new Error("The System returned invalid Service Program metadata")
 
-  const metadata = value as { name?: unknown, version?: unknown, icon?: unknown }
+  const metadata = value as { name?: unknown, version?: unknown }
 
-  if (typeof metadata.name !== "string" || typeof metadata.version !== "string"
-    || !Array.isArray(metadata.icon) || metadata.icon.some(byte => typeof byte !== "number")) {
+  if (typeof metadata.name !== "string" || typeof metadata.version !== "string") {
     throw new Error("The System returned invalid Service Program metadata")
   }
 
-  return Object.freeze({
-    name: metadata.name,
-    version: metadata.version,
-    icon: new Blob([Uint8Array.from(metadata.icon)], { type: "image/png" })
-  })
+  return Object.freeze({ name: metadata.name, version: metadata.version })
+}
+
+function parseServiceProgramIcon(value: unknown) {
+  if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) {
+    throw new Error("The System returned an invalid Service Program icon")
+  }
+  return new Blob([Uint8Array.from(value)], { type: "image/png" })
 }
 
 function frontWindow(system: System, process: ProcessHandle) {

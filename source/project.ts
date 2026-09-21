@@ -96,8 +96,7 @@ export class Project {
       name: config.name,
       version: config.version,
       description: config.description,
-      startup: launchValue(config.startup),
-      launch: launchValue(config.launch),
+      installLaunch: launchValue(config.installLaunch),
       categories: config.categories,
       keywords: config.keywords,
       website: config.website,
@@ -222,8 +221,8 @@ export class Project {
     if (this.config.icon) file(zip, this.directory, this.config.icon, "icon.png", "Program icon")
     if (this.config.agent) file(zip, this.directory, this.config.agent, "agent.md", "Program agent documentation")
 
-    const declaration = Buffer.from(JSON.stringify(packageDefinition(this.config, version), null, 4) + "\n")
-    zip.addFile("program.json", declaration)
+    const definition = Buffer.from(JSON.stringify(packageDefinition(this.config, version), null, 4) + "\n")
+    zip.addFile("program.json", definition)
 
     const archive = `${this.config.identity}@${version}.zip`
     const bytes = zip.toBuffer()
@@ -232,7 +231,7 @@ export class Project {
     const declarationPath = resolve(this.directory, "program.json")
     const checksumPath = resolve(this.directory, `${archive}.sha256`)
 
-    writeFileSync(declarationPath, declaration)
+    writeFileSync(declarationPath, definition)
     writeFileSync(archivePath, bytes)
     writeFileSync(checksumPath, `${digest}  ${archive}\n`)
 
@@ -295,7 +294,7 @@ function clientHalf(half: Config["client"], mode: ProjectMode, developmentUrl?: 
 }
 
 function validateConfig(config: Config) {
-  for (const value of [config.startup, config.launch]) {
+  for (const value of [config.installLaunch]) {
     if (value !== undefined && value !== true) parseLaunch(value)
   }
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
@@ -352,7 +351,7 @@ function validateConfig(config: Config) {
   }
 }
 
-function launchValue(value: Config["launch"]): Config["launch"] {
+function launchValue(value: Config["installLaunch"]): Config["installLaunch"] {
   return value === undefined || value === true ? value : parseLaunch(value)
 }
 
@@ -395,8 +394,7 @@ function packageDefinition(config: Config, version: string) {
     name: config.name,
     version,
     description: config.description,
-    startup: launchValue(config.startup),
-    launch: launchValue(config.launch),
+    installLaunch: launchValue(config.installLaunch),
     icon: config.icon ? "icon.png" : undefined,
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,

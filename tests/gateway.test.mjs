@@ -176,9 +176,10 @@ test("System.connect exposes the shared System contract over one owner-local add
         return [{ program: "example", process: "main", endpoint: "server" }]
       }
       if (event === "/auth/process/service/available") return true
-      if (event === "/auth/process/service/program-metadata") {
+      if (event === "/auth/process/service/program-metadata") return { name: "Example", version: "0.0.0" }
+      if (event === "/auth/process/service/program-icon") {
         requestedServiceIconSizes.push(values[1])
-        return { name: "Example", version: "0.0.0", icon: [137, 80, 78, 71] }
+        return [137, 80, 78, 71]
       }
     }
   })
@@ -212,6 +213,7 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal("name" in serverService, false)
     assert.equal(typeof serverService.available, "function")
     assert.equal(typeof serverService.programMetadata, "function")
+    assert.equal(typeof serverService.programIcon, "function")
     assert.equal(typeof serverService.publish, "function")
     assert.equal(typeof serverService.waitReady, "function")
     assert.equal(typeof serverService.lifecycle.subscribe, "function")
@@ -223,13 +225,14 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.deepEqual((await system.service.list()).map(service => service.address()), [serverService.address()])
     assert.deepEqual((await system.service.search("main")).map(service => service.address()), [serverService.address()])
     assert.equal(await serverService.available(), true)
-    await serverService.programMetadata()
-    const metadata = await serverService.programMetadata({ icon: "small" })
+    const metadata = await serverService.programMetadata()
+    await serverService.programIcon()
+    const icon = await serverService.programIcon("small")
     assert.deepEqual(requestedServiceIconSizes, ["medium", "small"])
     assert.equal(metadata.name, "Example")
     assert.equal(metadata.version, "0.0.0")
-    assert.equal(metadata.icon.type, "image/png")
-    assert.deepEqual([...new Uint8Array(await metadata.icon.arrayBuffer())], [137, 80, 78, 71])
+    assert.equal(icon.type, "image/png")
+    assert.deepEqual([...new Uint8Array(await icon.arrayBuffer())], [137, 80, 78, 71])
   } finally {
     await system.disconnect()
     await server.close()
@@ -333,12 +336,18 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       if (event === "/auth/program/area") return join(home, String(input[1]))
       if (event === "/auth/program/icon") return [137, 80, 78, 71]
       if (event === "/auth/program/agent") return "Program agent"
+      if (event === "/auth/program/definition") return {
+        identity: "example",
+        storage: join(home, "storage"),
+        server: { location: join(home, "server"), worker: "main.js" }
+      }
       if (event === "/auth/program/store") return "stored"
       if (event === "/auth/program/logs") return [{ value: 1 }]
       if (event === "/auth/program/permissions") {
         if (input[1] === "all") return { all: [] }
         if (input[1] === "allows") return true
-        if (input[1] === "set" || input[1] === "delete") return
+        if (input[1] === "allow" || input[1] === "deny" || input[1] === "cancel-request") return
+        if (input[1] === "request") return []
         return []
       }
 
@@ -389,8 +398,17 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await created.store.get("state"), "stored")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
     assert.deepEqual(await created.permissions.get("all"), [])
+    await created.permissions.allow("network", ["https://api.example.com"])
+    await created.permissions.deny("network")
+    assert.deepEqual(await created.permissions.request("uploads"), [])
     assert.equal((await created.icon()).type, "image/png")
     assert.equal(await created.agent(), "Program agent")
+    assert.deepEqual(await created.definition(), {
+      identity: "example",
+      version: "0.0.0",
+      storage: join(home, "storage"),
+      server: { location: join(home, "server"), worker: "main.js" }
+    })
 
     const controller = new AbortController()
     const processCreated = system.process.wait("create")
