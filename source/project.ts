@@ -115,6 +115,7 @@ export class Project {
       } : null
     const clientDefinition = client ? {
         location: /^https?:\/\//i.test(client.location) ? client.location : resolve(this.directory, client.location),
+        sandbox: client.sandbox,
         start: client.start,
         service: client.service,
         title: config.client?.title,
@@ -320,6 +321,7 @@ function validateConfig(config: Config) {
     if (declared.service !== undefined && typeof declared.service !== "boolean") throw new Error(`A declared ${half} Endpoint's service default must be true or false`)
   }
 
+  if (config.client?.sandbox !== undefined && typeof config.client.sandbox !== "boolean") throw new Error("A declared Client Endpoint's sandbox mode must be true or false")
   if (config.client?.header !== undefined && typeof config.client.header !== "boolean") throw new Error("A declared Client Endpoint's header default must be true or false")
   if (config.client?.frame !== undefined) parseWindowFrame(config.client.frame)
   if (config.client?.transaction !== undefined) parseWindowTransaction(config.client.transaction)
@@ -411,6 +413,7 @@ function packageDefinition(config: Config, version: string) {
     } },
     ...config.client && { client: {
       location: "client",
+      sandbox: config.client.sandbox,
       start: config.client.start,
       service: config.client.service,
       title: config.client.title,

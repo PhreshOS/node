@@ -32,7 +32,7 @@ export interface ProcessIdentityState {
 export interface ProcessState extends ProcessIdentityState {
   serverEndpoint: boolean
   server: { ready: boolean, service: boolean } | null
-  client: { service: boolean, sameOrigin: boolean } | null
+  client: { service: boolean } | null
   clientEndpoint: { window: WindowState } | null
 }
 
@@ -202,7 +202,6 @@ export default class SystemRepresentation {
     subscribe("/auth/process/server-stop", (identity, value) => this.changeEndpoint(identity, "server", value, false))
     subscribe("/auth/process/client-start", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/client-stop", (identity, value) => this.changeEndpoint(identity, "client", value, false))
-    subscribe("/auth/process/client-access", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/exited", (value, code, signal) => this.exitProcess(value, code, signal))
     subscribe("/auth/process/service-available", value => this.serviceEvent("available", value))
     subscribe("/auth/process/service-unavailable", value => this.serviceEvent("unavailable", value))
@@ -375,10 +374,7 @@ function processState(value: unknown): ProcessState {
     ...identity,
     server: record(source.server) ? { ready: source.server.ready === true, service: source.server.service === true } : null,
     serverEndpoint: source.serverEndpoint === true,
-    client: record(source.client) ? {
-      service: source.client.service === true,
-      sameOrigin: source.client.sameOrigin === true
-    } : null,
+    client: record(source.client) ? { service: source.client.service === true } : null,
     clientEndpoint: source.clientEndpoint === null
       ? null
       : { window: windowState((source.clientEndpoint as Record<string, unknown>).window) }

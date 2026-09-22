@@ -100,6 +100,7 @@ test("authoring defaults survive production, development, and packaging", async 
     installLaunch: { options: { document: "welcome.txt" } }
   }
   const clientDefaults = {
+    sandbox: false,
     frame: {
       radius: "full",
       color: "primary",
@@ -118,12 +119,14 @@ test("authoring defaults survive production, development, and packaging", async 
   }, { directory })
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.installLaunch, defaults.installLaunch)
+    assert.equal(definition.client.sandbox, false)
     assert.deepEqual(definition.client.frame, clientDefaults.frame)
     assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
   assert.deepEqual(definition.installLaunch, defaults.installLaunch)
+  assert.equal(definition.client.sandbox, false)
   assert.deepEqual(definition.client.frame, clientDefaults.frame)
   assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   assert.equal(definition.storage, undefined)
