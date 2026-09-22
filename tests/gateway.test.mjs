@@ -284,6 +284,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     version: "0.0.0",
     description: null,
     hasAgent: true,
+    permissions: {},
     server: { start: true, service: false },
     client: null
   }
@@ -346,7 +347,14 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       if (event === "/auth/program/permissions") {
         if (input[1] === "all") return { all: [] }
         if (input[1] === "allows") return true
-        if (input[1] === "allow" || input[1] === "deny" || input[1] === "cancel-request") return
+        if (input[1] === "allow") {
+          await publish("/auth/program/permissions-change", {
+            ...program,
+            permissions: { network: ["https://api.example.com"] }
+          })
+          return
+        }
+        if (input[1] === "deny" || input[1] === "cancel-request") return
         if (input[1] === "request") return []
         return []
       }
@@ -398,7 +406,14 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await created.store.get("state"), "stored")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
     assert.deepEqual(await created.permissions.get("all"), [])
+    const programPermissions = created.wait("permissions")
+    const systemPermissions = system.program.wait("permissions")
     await created.permissions.allow("network", ["https://api.example.com"])
+    assert.deepEqual(await programPermissions, { network: ["https://api.example.com"] })
+    assert.deepEqual(await systemPermissions, {
+      program: created,
+      permissions: { network: ["https://api.example.com"] }
+    })
     await created.permissions.deny("network")
     assert.deepEqual(await created.permissions.request("uploads"), [])
     assert.equal((await created.icon()).type, "image/png")
@@ -465,6 +480,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     version: "0.0.0",
     description: null,
     hasAgent: false,
+    permissions: {},
     server: { start: true, service: false },
     client: null
   }

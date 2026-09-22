@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import {
   parseConnectionSnapshot,
   parseProgramSnapshot,
+  parsePermissions,
   parseAppearance,
   parseWindowFrame,
   parseWindowTransaction,
@@ -9,6 +10,7 @@ import {
   parseSessionEndSnapshot,
   type Appearance,
   type ProcessSnapshot,
+  type Permissions,
   type ProgramSnapshot,
   type ServiceAddress,
   type WindowLayer,
@@ -16,7 +18,7 @@ import {
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
-export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean }>
+export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions }>
 
 export type WindowState = Omit<CoreWindowState, "front"> & Readonly<{ depth: number }>
 
@@ -195,6 +197,7 @@ export default class SystemRepresentation {
     subscribe("/auth/program/uninstall", (value, purge) => this.uninstallProgram(value, purge === true))
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
     subscribe("/auth/program/pinned", (value, pinned) => this.pinProgram(value, pinned === true))
+    subscribe("/auth/program/permissions-change", value => this.changeProgramPermissions(value))
 
     subscribe("/auth/process/created", value => this.createProcess(value))
     subscribe("/auth/process/server-ready", identity => this.serverReady(identity))
@@ -277,6 +280,14 @@ export default class SystemRepresentation {
     this.programs.set(program.identity, program)
     this.emit(`program:${program.reference}:pinned`, pinned)
     this.emit("program:pinned", program, pinned)
+  }
+
+  private changeProgramPermissions(value: unknown) {
+    const program = programState(value)
+    this.programs.set(program.identity, program)
+    this.emit(`program:${program.reference}:change`, program)
+    this.emit(`program:${program.reference}:permissions`, program.permissions)
+    this.emit("program:permissions", program)
   }
 
   private createProcess(value: unknown) {
@@ -362,7 +373,9 @@ function programState(value: unknown): ProgramState {
   const parsed = parseProgramSnapshot(value)
   if (parsed.installed === undefined) throw new Error("The System returned a Program without installation state")
 
-  return { ...parsed, installed: parsed.installed }
+  const permissions = parsePermissions((value as { permissions?: unknown }).permissions)
+
+  return { ...parsed, installed: parsed.installed, permissions }
 
 }
 

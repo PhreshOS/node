@@ -12,6 +12,7 @@ import {
   parseEndpointReference,
   parseConnectionSnapshot,
   parseProgramDefinition,
+  parsePermissions,
   parseSessionSnapshot,
   type Appearance,
   type AppearanceUpdate,
@@ -372,7 +373,7 @@ class ServiceRegistry extends Events<SystemServiceEvents, never> implements Syst
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
   public constructor(private readonly system: System) {
-    super(["create", "forget", "install", "uninstall", "pinned"], (event, subscriber) => {
+    super(["create", "forget", "install", "uninstall", "pinned", "permissions"], (event, subscriber) => {
       if (event === null) throw new Error("System Program events are named")
       return representation(system).on(`program:${event}`, (...values) => subscriber(this.event(event, values)))
     })
@@ -405,6 +406,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
     if (event === "uninstall") return { program, purge: values[1] === true }
     if (event === "pinned") return { program, pinned: values[1] === true }
+    if (event === "permissions") return { program, permissions: parsePermissions((values[0] as ProgramState).permissions) }
     return program
   }
 }
@@ -430,12 +432,13 @@ class ProgramHandle extends CoreProgram {
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pinned"], (event, subscriber) => {
+    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pinned", "permissions"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
         if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
         else if (event === "uninstall") subscriber({ purge: values[0] === true })
         else if (event === "pinned") subscriber(values[0] === true)
+        else if (event === "permissions") subscriber(parsePermissions(values[0]))
         else subscriber(undefined)
       })
     })
