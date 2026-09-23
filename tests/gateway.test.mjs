@@ -162,6 +162,8 @@ test("System.connect exposes the shared System contract over one owner-local add
   const home = await mkdtemp(join(tmpdir(), "phresh-gateway-"))
   const address = gatewayAddress(home)
   const requestedServiceIconSizes = []
+  const credentialChanges = []
+  let signOutAllSessions = 0
   const server = createGateway(address, {
     snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
@@ -171,6 +173,21 @@ test("System.connect exposes the shared System contract over one owner-local add
       }
     },
     route({ event, values }) {
+      if (event === "/auth/authentication/state") return { username: "owner" }
+      if (event === "/auth/authentication/requirements") return {
+        username: { minimumLength: 1, maximumLength: 64 },
+        password: { minimumLength: 8, maximumLength: 1024 }
+      }
+      if (event === "/auth/authentication/connections") return [{ identity: "connection-one", connected: true, session: null }]
+      if (event === "/auth/authentication/sessions") return [{ identity: "session-one", valid: true }]
+      if (event === "/auth/authentication/set-credentials") {
+        credentialChanges.push(values.at(-1))
+        return null
+      }
+      if (event === "/auth/authentication/sign-out-all-sessions") {
+        signOutAllSessions += 1
+        return null
+      }
       if (event === "/auth/uploads/access") return { path: join(home, "uploads"), limit: 1024 }
       if (event === "/auth/process/service/list" || event === "/auth/process/service/search") {
         return [{ program: "example", process: "main", endpoint: "server" }]
@@ -200,6 +217,17 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(await system.storage.navigate("..").path(), dirname(userHome))
     assert.equal(await system.uploads.path(), join(home, "uploads"))
     assert.deepEqual(await system.appearance.snapshot(), defaultAppearance)
+    assert.deepEqual(await system.authentication.state(), { username: "owner" })
+    assert.deepEqual(await system.authentication.requirements(), {
+      username: { minimumLength: 1, maximumLength: 64 },
+      password: { minimumLength: 8, maximumLength: 1024 }
+    })
+    assert.equal((await system.authentication.connections())[0]?.identity, "connection-one")
+    assert.equal((await system.authentication.sessions())[0]?.identity, "session-one")
+    await system.authentication.setCredentials({ username: "next", password: "next-password" })
+    await system.authentication.signOutAllSessions()
+    assert.deepEqual(credentialChanges, [{ username: "next", password: "next-password" }])
+    assert.equal(signOutAllSessions, 1)
 
     const serverService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })
     const sameServerService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })

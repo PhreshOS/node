@@ -101,7 +101,7 @@ test("authoring defaults survive production, development, and packaging", async 
   }
   const clientDefaults = {
     sandbox: false,
-    frame: {
+    surface: {
       radius: "full",
       color: "primary",
       material: { opacity: 0.7 }
@@ -120,14 +120,14 @@ test("authoring defaults survive production, development, and packaging", async 
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.installLaunch, defaults.installLaunch)
     assert.equal(definition.client.sandbox, false)
-    assert.deepEqual(definition.client.frame, clientDefaults.frame)
+    assert.deepEqual(definition.client.surface, clientDefaults.surface)
     assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
   assert.deepEqual(definition.installLaunch, defaults.installLaunch)
   assert.equal(definition.client.sandbox, false)
-  assert.deepEqual(definition.client.frame, clientDefaults.frame)
+  assert.deepEqual(definition.client.surface, clientDefaults.surface)
   assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
   assert.equal(definition.storage, undefined)
   assert.equal(definition.client.devCommand, undefined)
@@ -139,7 +139,7 @@ test("authoring validates consumed install launch values and ignores additional 
   assert.deepEqual(Project.define({ ...config, installLaunch: { client: { extension: true } } }).productionDefinition().installLaunch, { client: {} })
   assert.throws(() => Project.define({ ...config, installLaunch: null }), /object/)
   assert.throws(() => Project.define({ ...config, installLaunch: false }), /object/)
-  assert.throws(() => Project.define({ ...config, client: { ...config.client, frame: { radius: -1 } } }), /frame/i)
+  assert.throws(() => Project.define({ ...config, client: { ...config.client, surface: { radius: -1 } } }), /surface/i)
   assert.throws(() => Project.define({ ...config, client: { ...config.client, transaction: -1 } }), /transaction/i)
 })
 

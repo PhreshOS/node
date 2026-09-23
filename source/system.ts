@@ -11,9 +11,13 @@ import {
   isServiceAddress,
   parseEndpointReference,
   parseConnectionSnapshot,
+  parseAuthenticationRequirements,
+  parseAuthenticationState,
   parseProgramDefinition,
   parsePermissions,
+  parseSessionEndSnapshot,
   parseSessionSnapshot,
+  type AuthenticationCredentials,
   type Appearance,
   type AppearanceUpdate,
   type ClientDeclaration,
@@ -46,15 +50,13 @@ import {
   type ShellOptions,
   type Size,
   type System as CoreSystem,
-  type SystemConnection,
-  type SystemConnectionEvents,
+  type SystemAuthentication,
+  type SystemAuthenticationEvents,
   type SystemProcessEvents,
   type SystemProcess,
   type SystemProgram,
   type SystemProgramEvents,
   type SystemUploads,
-  type SystemSession,
-  type SystemSessionEvents,
   type SystemService,
   type SystemServiceEvents,
   type SessionEvents,
@@ -64,7 +66,7 @@ import {
   type WritableAppearance,
   type Window,
   type WindowEvents,
-  type WindowFrame,
+  type WindowSurface,
   type WindowGeometry,
   type WindowTransaction
 } from "@phreshos/core"
@@ -108,8 +110,7 @@ export class System implements CoreSystem {
   public readonly appearance: WritableAppearance
   public readonly program: SystemProgram
   public readonly process: SystemProcess
-  public readonly connection: SystemConnection
-  public readonly session: SystemSession
+  public readonly authentication: SystemAuthentication
   public readonly service: SystemService
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
@@ -133,8 +134,7 @@ export class System implements CoreSystem {
     this.appearance = new SystemAppearance(this)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
-    this.connection = new ConnectionRegistry(this)
-    this.session = new SessionRegistry(this)
+    this.authentication = new AuthenticationRegistry(this)
     this.service = new ServiceRegistry(this)
     this.uploads = new Uploads(value => uploadRequest(this, value), () => connectedSignal(this))
     representation.activate()
@@ -229,23 +229,66 @@ class SystemAppearance extends Events<{ change: Appearance }> {
   }
 }
 
-class ConnectionRegistry extends Events<SystemConnectionEvents> implements SystemConnection {
+class AuthenticationRegistry extends Events<SystemAuthenticationEvents> implements SystemAuthentication {
   public constructor(private readonly system: System) {
-    super(["create", "disconnect"], (event, subscriber) => {
-      if (event === null) throw new Error("System Connection events are named")
-      return representation(system).on(`connection:${event}`, value => subscriber(connectionHandle(system, value)))
+    super(["connectionCreate", "connectionDisconnect", "sessionCreate", "sessionEnd"], (event, subscriber) => {
+      if (event === null) throw new Error("System Authentication events are named")
+      const route = authenticationRepresentationEvent(event)
+      return representation(system).on(route, (...values) => subscriber(authenticationEvent(system, route, values)))
     })
   }
 
-  public async list() {
-    const snapshots = await representation(this.system).call<unknown[]>("/connection/list")
+  public async state() {
+    return parseAuthenticationState(await representation(this.system).call("/authentication/state"))
+  }
+
+  public async requirements() {
+    return parseAuthenticationRequirements(await representation(this.system).call("/authentication/requirements"))
+  }
+
+  public async connections() {
+    const snapshots = await representation(this.system).call<unknown[]>("/authentication/connections")
     return snapshots.map(value => connectionHandle(this.system, value))
   }
 
-  public async find(identity: string) {
-    const snapshot = await representation(this.system).call<unknown>("/connection/find", identity)
+  public async connection(identity: string) {
+    const snapshot = await representation(this.system).call<unknown>("/authentication/connection", identity)
     return snapshot === null ? null : connectionHandle(this.system, snapshot)
   }
+
+  public async sessions() {
+    const snapshots = await representation(this.system).call<unknown[]>("/authentication/sessions")
+    return snapshots.map(value => sessionHandle(this.system, value))
+  }
+
+  public async session(identity: string) {
+    const snapshot = await representation(this.system).call<unknown>("/authentication/session", identity)
+    return snapshot === null ? null : sessionHandle(this.system, snapshot)
+  }
+
+  public async setCredentials(credentials: AuthenticationCredentials) {
+    await representation(this.system).call("/authentication/set-credentials", credentials)
+  }
+
+  public async signOutAllSessions() {
+    await representation(this.system).call("/authentication/sign-out-all-sessions")
+  }
+}
+
+function authenticationRepresentationEvent(event: string) {
+  if (event === "connectionCreate") return "connection:create"
+  if (event === "connectionDisconnect") return "connection:disconnect"
+  if (event === "sessionCreate") return "session:create"
+  if (event === "sessionEnd") return "session:end"
+  throw new Error(`The Authentication domain does not expose a ${event} event`)
+}
+
+function authenticationEvent(system: System, route: string, values: unknown[]) {
+  if (route.startsWith("connection:")) return connectionHandle(system, values[0])
+  const handle = sessionHandle(system, values[0])
+  return route === "session:end"
+    ? { session: handle, reason: parseSessionEndSnapshot({ ...(values[0] as object), reason: values[1] }).reason }
+    : handle
 }
 
 class ConnectionHandle extends CoreConnection {
@@ -280,28 +323,6 @@ class ConnectionHandle extends CoreConnection {
 
   public async signIn() {
     return sessionHandle(this.system, await representation(this.system).call("/connection/sign-in", this.identity))
-  }
-}
-
-class SessionRegistry extends Events<SystemSessionEvents> implements SystemSession {
-  public constructor(private readonly system: System) {
-    super(["create", "end"], (event, subscriber) => {
-      if (event === null) throw new Error("System Session events are named")
-      return representation(system).on(`session:${event}`, (...values) => {
-        const session = sessionHandle(system, values[0])
-        subscriber(event === "end" ? { session, reason: values[1] } : session)
-      })
-    })
-  }
-
-  public async list() {
-    const snapshots = await representation(this.system).call<unknown[]>("/session/list")
-    return snapshots.map(value => sessionHandle(this.system, value))
-  }
-
-  public async find(identity: string) {
-    const snapshot = await representation(this.system).call<unknown>("/session/find", identity)
-    return snapshot === null ? null : sessionHandle(this.system, snapshot)
   }
 }
 
@@ -803,7 +824,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "minimize", "maximize", "changeTitle", "changeHeader", "changeFrame", "changeTransaction", "front"], (event, subscriber) => {
+    super(["move", "resize", "minimize", "maximize", "changeTitle", "changeHeader", "changeSurface", "changeTransaction", "front"], (event, subscriber) => {
       if (event === null) throw new Error("Window events are named")
       return representation(system).on(`window:${process.identity}:${event}`, subscriber)
     })
@@ -811,7 +832,7 @@ class SystemWindow extends Events<WindowEvents> implements Window {
 
   public async title() { return (await this.snapshot()).title }
   public async header() { return (await this.snapshot()).header }
-  public async frame() { return (await this.snapshot()).frame }
+  public async surface() { return (await this.snapshot()).surface }
   public async transaction() { return (await this.snapshot()).transaction }
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
@@ -826,7 +847,7 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async maximize(maximized = true) { await this.change("maximize", maximized) }
   public async setTitle(title: string) { await this.change("set-title", title) }
   public async setHeader(header: boolean) { await this.change("set-header", header) }
-  public async setFrame(frame: WindowFrame) { await this.change("set-frame", frame) }
+  public async setSurface(surface: WindowSurface) { await this.change("set-surface", surface) }
   public async setTransaction(transaction: WindowTransaction) { await this.change("set-transaction", transaction) }
   public async raise() { await this.change("raise") }
 

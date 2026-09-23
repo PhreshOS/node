@@ -1,6 +1,7 @@
 import type {
   ClientEndpoint,
   Connection,
+  AuthenticationState,
   Endpoint,
   ExecuteOperationSummary,
   Process,
@@ -31,8 +32,9 @@ const sameClient: ClientEndpoint<{ change: number }, string> = client
 const service: Service = connected.service.prepare({ program: "example", process: "main", endpoint: serviceEndpoint })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
-const connections: Promise<Connection[]> = connected.connection.list()
-const sessions: Promise<Session[]> = connected.session.list()
+const authenticationState: Promise<AuthenticationState> = connected.authentication.state()
+const connections: Promise<Connection[]> = connected.authentication.connections()
+const sessions: Promise<Session[]> = connected.authentication.sessions()
 const execution: Promise<ExecuteOperationSummary[]> = connected.execute({ $domain: "operation", $operation: "list" })
 const appearanceUpdate: Promise<void> = connected.appearance.update({ colors: { dark: { danger: "#ff0000" } } })
 const programDefinition = program.definition()
@@ -49,6 +51,7 @@ async function authenticationDomains() {
 }
 
 void authenticationDomains
+void authenticationState
 void sessions
 void execution
 void appearanceUpdate

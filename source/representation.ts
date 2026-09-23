@@ -4,7 +4,7 @@ import {
   parseProgramSnapshot,
   parsePermissions,
   parseAppearance,
-  parseWindowFrame,
+  parseWindowSurface,
   parseWindowTransaction,
   parseSessionSnapshot,
   parseSessionEndSnapshot,
@@ -230,7 +230,7 @@ export default class SystemRepresentation {
       this.emit("session:end", parsed, parsed.reason)
     })
 
-    for (const event of ["move", "resize", "change-title", "change-header", "change-frame", "change-transaction", "raise", "minimize", "maximize"] as const) {
+    for (const event of ["move", "resize", "change-title", "change-header", "change-surface", "change-transaction", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -427,7 +427,7 @@ function windowState(value: unknown): WindowState {
   return {
     title: value.title,
     header: value.header,
-    frame: parseWindowFrame(value.frame),
+    surface: parseWindowSurface(value.surface),
     transaction: parseWindowTransaction(value.transaction),
     position: value.position as WindowState["position"],
     size: value.size as WindowState["size"],
@@ -444,7 +444,7 @@ function windowMessage(event: string, process: ProcessState) {
   if (event === "resize") return window.size
   if (event === "change-title") return window.title
   if (event === "change-header") return window.header
-  if (event === "change-frame") return window.frame
+  if (event === "change-surface") return window.surface
   if (event === "change-transaction") return window.transaction
   if (event === "minimize") return window.minimized
   if (event === "maximize") return window.maximized
@@ -454,7 +454,7 @@ function windowMessage(event: string, process: ProcessState) {
 function camel(value: string) {
   if (value === "change-title") return "changeTitle"
   if (value === "change-header") return "changeHeader"
-  if (value === "change-frame") return "changeFrame"
+  if (value === "change-surface") return "changeSurface"
   if (value === "change-transaction") return "changeTransaction"
   return value
 }

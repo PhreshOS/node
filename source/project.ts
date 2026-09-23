@@ -1,7 +1,7 @@
 import {
   isRelativeValue,
   parseLaunch,
-  parseWindowFrame,
+  parseWindowSurface,
   parseWindowTransaction,
   layers,
   type ClientConfig,
@@ -120,7 +120,7 @@ export class Project {
         service: client.service,
         title: config.client?.title,
         header: config.client?.header,
-        frame: config.client?.frame,
+        surface: config.client?.surface,
         transaction: config.client?.transaction,
         size: config.client?.size,
         position: config.client?.position,
@@ -323,7 +323,7 @@ function validateConfig(config: Config) {
 
   if (config.client?.sandbox !== undefined && typeof config.client.sandbox !== "boolean") throw new Error("A declared Client Endpoint's sandbox mode must be true or false")
   if (config.client?.header !== undefined && typeof config.client.header !== "boolean") throw new Error("A declared Client Endpoint's header default must be true or false")
-  if (config.client?.frame !== undefined) parseWindowFrame(config.client.frame)
+  if (config.client?.surface !== undefined) parseWindowSurface(config.client.surface)
   if (config.client?.transaction !== undefined) parseWindowTransaction(config.client.transaction)
 
   if (!(config.server && (config.server.start ?? true)) && !(config.client && (config.client.start ?? true))) {
@@ -418,7 +418,7 @@ function packageDefinition(config: Config, version: string) {
       service: config.client.service,
       title: config.client.title,
       header: config.client.header,
-      frame: config.client.frame,
+      surface: config.client.surface,
       transaction: config.client.transaction,
       size: config.client.size,
       position: config.client.position,
