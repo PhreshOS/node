@@ -4,8 +4,6 @@ import {
   parseProgramSnapshot,
   parsePermissions,
   parseAppearance,
-  parseWindowSurface,
-  parseWindowTransaction,
   parseSessionSnapshot,
   parseSessionEndSnapshot,
   type Appearance,
@@ -35,7 +33,7 @@ export interface ProcessState extends ProcessIdentityState {
   serverEndpoint: boolean
   server: { ready: boolean, service: boolean } | null
   client: { service: boolean } | null
-  clientEndpoint: { window: WindowState } | null
+  clientEndpoint: { window: WindowState | null } | null
 }
 
 export type Observation =
@@ -230,7 +228,7 @@ export default class SystemRepresentation {
       this.emit("session:end", parsed, parsed.reason)
     })
 
-    for (const event of ["move", "resize", "change-title", "change-header", "change-surface", "change-transaction", "raise", "minimize", "maximize"] as const) {
+    for (const event of ["move", "resize", "change-title", "change-header", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
   }
@@ -339,7 +337,7 @@ export default class SystemRepresentation {
     const process = this.processes.get(value.identity)
     if (!process?.clientEndpoint) return
     process.clientEndpoint.window = windowState(value.window)
-    if (event !== "change-opening-transaction") this.emit(`window:${process.identity}:${camel(event)}`, windowMessage(event, process))
+    this.emit(`window:${process.identity}:${camel(event)}`, windowMessage(event, process))
     this.emit(`process:${process.reference}:change`, process)
   }
 
@@ -390,7 +388,9 @@ function processState(value: unknown): ProcessState {
     client: record(source.client) ? { service: source.client.service === true } : null,
     clientEndpoint: source.clientEndpoint === null
       ? null
-      : { window: windowState((source.clientEndpoint as Record<string, unknown>).window) }
+      : { window: (source.clientEndpoint as Record<string, unknown>).window === null
+          ? null
+          : windowState((source.clientEndpoint as Record<string, unknown>).window) }
   }
 }
 
@@ -427,8 +427,6 @@ function windowState(value: unknown): WindowState {
   return {
     title: value.title,
     header: value.header,
-    surface: parseWindowSurface(value.surface),
-    transaction: parseWindowTransaction(value.transaction),
     position: value.position as WindowState["position"],
     size: value.size as WindowState["size"],
     depth: value.depth,
@@ -440,12 +438,11 @@ function windowState(value: unknown): WindowState {
 
 function windowMessage(event: string, process: ProcessState) {
   const window = process.clientEndpoint!.window
+  if (!window) throw new Error("This Client Endpoint is not running")
   if (event === "move") return window.position
   if (event === "resize") return window.size
   if (event === "change-title") return window.title
   if (event === "change-header") return window.header
-  if (event === "change-surface") return window.surface
-  if (event === "change-transaction") return window.transaction
   if (event === "minimize") return window.minimized
   if (event === "maximize") return window.maximized
   return true
@@ -454,8 +451,6 @@ function windowMessage(event: string, process: ProcessState) {
 function camel(value: string) {
   if (value === "change-title") return "changeTitle"
   if (value === "change-header") return "changeHeader"
-  if (value === "change-surface") return "changeSurface"
-  if (value === "change-transaction") return "changeTransaction"
   return value
 }
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) }

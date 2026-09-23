@@ -101,12 +101,8 @@ test("authoring defaults survive production, development, and packaging", async 
   }
   const clientDefaults = {
     sandbox: false,
-    surface: {
-      radius: "full",
-      color: "primary",
-      material: { opacity: 0.7 }
-    },
-    transaction: { duration: 240, easing: "ease-out" }
+    header: false,
+    size: { width: 720, height: 480 }
   }
   const project = Project.define({
     identity: "example",
@@ -120,15 +116,15 @@ test("authoring defaults survive production, development, and packaging", async 
   for (const definition of [project.productionDefinition(), project.developmentDefinition()]) {
     assert.deepEqual(definition.installLaunch, defaults.installLaunch)
     assert.equal(definition.client.sandbox, false)
-    assert.deepEqual(definition.client.surface, clientDefaults.surface)
-    assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
+    assert.equal(definition.client.header, false)
+    assert.deepEqual(definition.client.size, clientDefaults.size)
   }
   const packed = await project.pack()
   const definition = JSON.parse(await readFile(packed.declarationPath, "utf8"))
   assert.deepEqual(definition.installLaunch, defaults.installLaunch)
   assert.equal(definition.client.sandbox, false)
-  assert.deepEqual(definition.client.surface, clientDefaults.surface)
-  assert.deepEqual(definition.client.transaction, clientDefaults.transaction)
+  assert.equal(definition.client.header, false)
+  assert.deepEqual(definition.client.size, clientDefaults.size)
   assert.equal(definition.storage, undefined)
   assert.equal(definition.client.devCommand, undefined)
   assert.equal(definition.client.devUrl, undefined)
@@ -139,8 +135,8 @@ test("authoring validates consumed install launch values and ignores additional 
   assert.deepEqual(Project.define({ ...config, installLaunch: { client: { extension: true } } }).productionDefinition().installLaunch, { client: {} })
   assert.throws(() => Project.define({ ...config, installLaunch: null }), /object/)
   assert.throws(() => Project.define({ ...config, installLaunch: false }), /object/)
-  assert.throws(() => Project.define({ ...config, client: { ...config.client, surface: { radius: -1 } } }), /surface/i)
-  assert.throws(() => Project.define({ ...config, client: { ...config.client, transaction: -1 } }), /transaction/i)
+  const definition = Project.define({ ...config, client: { ...config.client, extension: true } }).productionDefinition()
+  assert.equal(definition.client.extension, undefined)
 })
 
 test("authoring preserves optional post-install launch decisions", () => {

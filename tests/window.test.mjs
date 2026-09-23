@@ -14,18 +14,20 @@ test("Window flags and geometry cross the owner boundary independently", async (
     installed: false, name: "Example", version: "0.0.0", description: null, hasAgent: false,
     permissions: {},
     server: null,
-    client: { sandbox: true, start: true, service: false, title: null, header: null, surface: null, transaction: null, position: null, size: null, layer: null, minimize: null, maximize: null }
+    client: { sandbox: true, start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null }
   }
   const window = {
-    title: "Example", header: true, surface: true, transaction: false, position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
+    title: "Example", header: true, position: { x: 20, y: 30 }, size: { width: 320, height: 240 },
     layer: "window", depth: 1, minimized: false, maximized: false
   }
   const process = {
     reference: "process-reference", identity: "process", name: "main", program: "example",
     parent: null, options: {}, startedAt: new Date(), serverEndpoint: false, server: null,
-    client: null, clientEndpoint: { window }
+    client: { service: false }, clientEndpoint: { window }
   }
+  let publish
   const gateway = createGateway(gatewayAddress(home), {
+    connected(peer) { publish = (event, ...values) => peer.$outbound.publish(event, ...values) },
     snapshot: {
       linkManager: { appearance: { key: "appearance", value: defaultAppearance } },
       authManager: {
@@ -59,7 +61,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
   try {
     const owner = await system.process.find("process")
     assert(owner)
-    assert.equal(await owner.client.running(), false)
+    assert.equal(await owner.client.running(), true)
     assert.equal(await owner.client.process(), owner)
 
     const current = owner.client.window
@@ -89,6 +91,21 @@ test("Window flags and geometry cross the owner boundary independently", async (
     assert.equal(await current.maximized(), false)
     assert.deepEqual(await current.position(), { x: geometry.x, y: geometry.y })
     assert.deepEqual(await current.size(), { width: geometry.width, height: geometry.height })
+
+    process.client = null
+    process.clientEndpoint.window = null
+    await publish("/auth/process/client-stop", process.identity, process)
+    await assert.rejects(current.position(), /not running/)
+
+    const restarted = {
+      title: "Fresh", header: true, position: { x: 0, y: 0 }, size: { width: 520, height: 340 },
+      layer: "window", depth: 1, minimized: false, maximized: false
+    }
+    process.client = { service: false }
+    process.clientEndpoint.window = restarted
+    await publish("/auth/process/client-start", process.identity, process)
+    assert.equal(await current.title(), "Fresh")
+    assert.deepEqual(await current.position(), { x: 0, y: 0 })
   } finally {
     await system.disconnect()
     await gateway.close()

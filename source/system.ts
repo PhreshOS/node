@@ -66,9 +66,7 @@ import {
   type WritableAppearance,
   type Window,
   type WindowEvents,
-  type WindowSurface,
   type WindowGeometry,
-  type WindowTransaction
 } from "@phreshos/core"
 import { homedir } from "node:os"
 import { gatewayAddress } from "./address.js"
@@ -824,7 +822,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
 
 class SystemWindow extends Events<WindowEvents> implements Window {
   public constructor(private readonly system: System, private readonly process: ProcessHandle) {
-    super(["move", "resize", "minimize", "maximize", "changeTitle", "changeHeader", "changeSurface", "changeTransaction", "front"], (event, subscriber) => {
+    super(["move", "resize", "minimize", "maximize", "changeTitle", "changeHeader", "front"], (event, subscriber) => {
       if (event === null) throw new Error("Window events are named")
       return representation(system).on(`window:${process.identity}:${event}`, subscriber)
     })
@@ -832,8 +830,6 @@ class SystemWindow extends Events<WindowEvents> implements Window {
 
   public async title() { return (await this.snapshot()).title }
   public async header() { return (await this.snapshot()).header }
-  public async surface() { return (await this.snapshot()).surface }
-  public async transaction() { return (await this.snapshot()).transaction }
   public async position() { return (await this.snapshot()).position }
   public async size() { return (await this.snapshot()).size }
   public async minimized() { return (await this.snapshot()).minimized }
@@ -847,13 +843,13 @@ class SystemWindow extends Events<WindowEvents> implements Window {
   public async maximize(maximized = true) { await this.change("maximize", maximized) }
   public async setTitle(title: string) { await this.change("set-title", title) }
   public async setHeader(header: boolean) { await this.change("set-header", header) }
-  public async setSurface(surface: WindowSurface) { await this.change("set-surface", surface) }
-  public async setTransaction(transaction: WindowTransaction) { await this.change("set-transaction", transaction) }
   public async raise() { await this.change("raise") }
 
   private snapshot() {
-    const window = processState(this.system, this.process).clientEndpoint?.window
-    if (!window) throw new Error(`Process "${this.process.identity}" has no Client declaration`)
+    const endpoint = processState(this.system, this.process).clientEndpoint
+    if (!endpoint) throw new Error(`Process "${this.process.identity}" has no Client declaration`)
+    const window = endpoint.window
+    if (!window) throw new Error("This Client Endpoint is not running")
     return Promise.resolve(window)
   }
 
