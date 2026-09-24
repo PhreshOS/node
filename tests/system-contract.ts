@@ -39,6 +39,10 @@ const execution: Promise<ExecuteOperationSummary[]> = connected.execute({ $domai
 const appearanceUpdate: Promise<void> = connected.appearance.update({ colors: { dark: { danger: "#ff0000" } } })
 const programDefinition = program.definition()
 const serviceIcon = service.programIcon("small")
+const systemLogs = connected.logs.query("select * from logs where level = ?", ["error"])
+const systemLogStop = connected.logs.subscribe("log", record => void record.level)
+const programLogs = program.logs.query("select * from logs where process = ?", ["main"])
+const programLogStop = program.logs.subscribe("log", record => void record.source)
 
 async function authenticationDomains() {
   const connection = (await connections)[0]
@@ -57,14 +61,19 @@ void execution
 void appearanceUpdate
 void programDefinition
 void serviceIcon
+void systemLogs
+void systemLogStop
+void programLogs
+void programLogStop
 
 program.permissions.get("all")
 program.permissions.all()
 program.permissions.allows("network", ["https://api.example.com"])
 program.permissions.allow("all")
 program.permissions.deny("network")
-program.permissions.request("uploads")
-program.permissions.timeout(120_000).request("network", ["https://api.example.com"])
+connected.permissions.requests()
+// @ts-expect-error owner decisions and Endpoint requests are separate contracts.
+program.permissions.request("all")
 // @ts-expect-error Permission assignments are replaced or denied; they are never deleted.
 program.permissions.delete("all")
 

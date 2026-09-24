@@ -4,6 +4,7 @@ import {
   ClientService as CoreClientService,
   Process as CoreProcess,
   Program as CoreProgram,
+  PermissionRequest as CorePermissionRequest,
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
   Session as CoreSession,
@@ -15,6 +16,10 @@ import {
   parseAuthenticationState,
   parseProgramDefinition,
   parsePermissions,
+  parsePermission,
+  parsePermissionRequestSnapshot,
+  parseProgramLogRecord,
+  parseSystemLogRecord,
   parseSessionEndSnapshot,
   parseSessionSnapshot,
   type AuthenticationCredentials,
@@ -44,6 +49,9 @@ import {
   type ProgramProcessRunEvent as CoreProgramProcessRunEvent,
   type ProgramProcessRunOptions as CoreProgramProcessRunOptions,
   type ProgramSql,
+  type ProgramLogs,
+  type ProgramLogRecord,
+  type LogEvents,
   type ProgramStore,
   type ProcessEvents,
   type ServiceAddress,
@@ -52,6 +60,10 @@ import {
   type System as CoreSystem,
   type SystemAuthentication,
   type SystemAuthenticationEvents,
+  type SystemPermissionEvents,
+  type SystemPermissions,
+  type PermissionRequestEvents,
+  type PermissionRequestSnapshot,
   type SystemProcessEvents,
   type SystemProcess,
   type SystemProgram,
@@ -59,6 +71,8 @@ import {
   type SystemUploads,
   type SystemService,
   type SystemServiceEvents,
+  type SystemLogRecord,
+  type SystemLogs,
   type SessionEvents,
   type SessionSnapshot,
   type Storage,
@@ -109,6 +123,8 @@ export class System implements CoreSystem {
   public readonly program: SystemProgram
   public readonly process: SystemProcess
   public readonly authentication: SystemAuthentication
+  public readonly permissions: SystemPermissions
+  public readonly logs: SystemLogs
   public readonly service: SystemService
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
@@ -133,6 +149,8 @@ export class System implements CoreSystem {
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
     this.authentication = new AuthenticationRegistry(this)
+    this.permissions = new PermissionRegistry(this)
+    this.logs = new SystemLogsHandle(this)
     this.service = new ServiceRegistry(this)
     this.uploads = new Uploads(value => uploadRequest(this, value), () => connectedSignal(this))
     representation.activate()
@@ -184,6 +202,12 @@ function connectedSignal(system: System, signal?: AbortSignal) {
   const lifetime = systemState(system).lifetime.signal
   requireConnected(system)
   return signal ? AbortSignal.any([signal, lifetime]) : lifetime
+}
+
+function writtenSql(statement: string | TemplateStringsArray, rest: unknown[]): [string, unknown[]] {
+  return typeof statement === "string"
+    ? [statement, Array.isArray(rest[0]) ? rest[0] as unknown[] : []]
+    : [statement.raw.join("?"), rest]
 }
 
 function representation(system: System) {
@@ -271,6 +295,88 @@ class AuthenticationRegistry extends Events<SystemAuthenticationEvents> implemen
   public async signOutAllSessions() {
     await representation(this.system).call("/authentication/sign-out-all-sessions")
   }
+}
+
+class PermissionRegistry extends Events<SystemPermissionEvents> implements SystemPermissions {
+  public constructor(private readonly system: System) {
+    super(["permissionRequest", "permissionResolve"], (event, subscriber) => {
+      if (event === null) throw new Error("System Permission events are named")
+      const route = event === "permissionRequest" ? "permission:request" : "permission:resolve"
+      return representation(system).on(route, (...values) => subscriber(permissionRegistryEvent(system, event as keyof SystemPermissionEvents, values)))
+    })
+  }
+
+  public async requests() {
+    const values = await representation(this.system).call<unknown[]>("/permissions/requests")
+    return values.map(value => permissionRequestHandle(this.system, value))
+  }
+}
+
+class SystemLogsHandle extends Events<LogEvents<SystemLogRecord>> implements SystemLogs {
+  public constructor(private readonly system: System) {
+    super(["log"], (event, subscriber) => {
+      if (event !== "log") throw new Error("System log events are named")
+      return representation(system).on("system-log", value => subscriber(parseSystemLogRecord(value)))
+    })
+  }
+
+  public query<Row = Record<string, unknown>>(statement: TemplateStringsArray, ...values: unknown[]): Promise<Row[]>
+  public query<Row = Record<string, unknown>>(statement: string, values?: unknown[]): Promise<Row[]>
+  public query<Row = Record<string, unknown>>(statement: string | TemplateStringsArray, ...rest: unknown[]) {
+    const [text, values] = writtenSql(statement, rest)
+    return representation(this.system).call<Row[]>("/logs/query", text, values)
+  }
+}
+
+class PermissionRequestHandle extends CorePermissionRequest {
+  public readonly subscribe: CorePermissionRequest["subscribe"]
+  public readonly wait: CorePermissionRequest["wait"]
+  public readonly events: CorePermissionRequest["events"]
+  public readonly identity: string
+  public readonly from
+  public readonly createdAt: Date
+  public readonly expiresAt: Date
+  public readonly name
+  public readonly scope
+
+  public constructor(private readonly system: System, snapshot: PermissionRequestSnapshot) {
+    super()
+    this.identity = snapshot.identity
+    this.from = endpointFromReference(system, snapshot.from)!
+    this.createdAt = snapshot.createdAt
+    this.expiresAt = snapshot.expiresAt
+    this.name = snapshot.name
+    this.scope = snapshot.scope
+    const events = new Events<PermissionRequestEvents>(["resolve"], (event, subscriber) => {
+      if (event === null) throw new Error("PermissionRequest events are named")
+      return representation(system).on(`permission:${this.identity}:resolve`, value => subscriber(parsePermission(this.name, value)))
+    })
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
+  }
+
+  public async pending() {
+    return await representation(this.system).call("/permissions/pending", this.identity) === true
+  }
+
+  public async allow() { await representation(this.system).call("/permissions/allow", this.identity) }
+  public async deny() { await representation(this.system).call("/permissions/deny", this.identity) }
+  public async cancel() { await representation(this.system).call("/permissions/cancel", this.identity) }
+}
+
+function permissionRequestHandle(system: System, value: unknown) {
+  const snapshot = parsePermissionRequestSnapshot(value)
+  return systemState(system).handles.obtain(
+    `permission:${snapshot.identity}`,
+    () => new PermissionRequestHandle(system, snapshot)
+  )
+}
+
+function permissionRegistryEvent(system: System, event: keyof SystemPermissionEvents, values: unknown[]) {
+  const request = permissionRequestHandle(system, values[0])
+  if (event === "permissionRequest") return request
+  return { request, permission: parsePermission(request.name, values[1]) }
 }
 
 function authenticationRepresentationEvent(event: string) {
@@ -439,7 +545,7 @@ class ProgramHandle extends CoreProgram {
   public readonly data: Storage
   public readonly cache: Storage
   public readonly store: ProgramStore
-  public readonly logs: ProgramSql
+  public readonly logs: ProgramLogs
   public readonly database: ProgramSql
   public readonly startup: ProgramStartup
   public readonly permissions
@@ -469,7 +575,17 @@ class ProgramHandle extends CoreProgram {
     this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`, () => connectedSignal(system))
     this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`, () => connectedSignal(system))
     this.store = programStore(call, address)
-    this.logs = programSql(call, address, "logs")
+    const logQuery = programSql(call, address, "logs")
+    const logEvents = new Events<LogEvents<ProgramLogRecord>>(["log"], (event, subscriber) => {
+      if (event !== "log") throw new Error("Program log events are named")
+      return representation(system).on(`program-log:${this.reference}`, value => subscriber(parseProgramLogRecord(value)))
+    })
+    this.logs = {
+      query: logQuery.query,
+      subscribe: logEvents.subscribe,
+      wait: logEvents.wait,
+      events: logEvents.events
+    }
     this.database = programSql(call, address, "database")
     this.startup = new ProgramStartup(system, this)
     this.permissions = programPermissions(call, address)
@@ -1004,7 +1120,10 @@ async function programStoragePath(system: System, handle: ReturnType<ProgramHand
 function endpointFromReference(system: System, value: unknown) {
   if (value === null) return null
   const reference = parseEndpointReference(value)
-  const owner = processHandle(system, required(representation(system).processes.get(reference.process.identity), reference.process.identity))
+  const owner = processHandle(
+    system,
+    representation(system).processes.get(reference.process.identity) ?? processIdentityState(reference.process)
+  )
   return reference.kind === "server" ? owner.server : owner.client
 }
 

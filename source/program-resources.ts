@@ -2,13 +2,11 @@ import {
   parsePermission,
   parsePermissions,
   type PermissionName,
-  type PermissionRequest,
+  type PermissionRequestInput,
   type ProgramPermissions,
   type ProgramSql,
-  type ProgramStore,
-  type TimedProgramPermissions
+  type ProgramStore
 } from "@phreshos/core"
-import { randomUUID } from "node:crypto"
 
 type Call = <Result = unknown>(event: string, ...values: unknown[]) => Promise<Result>
 type HandleAddress = Readonly<{ identity: string, reference: string }>
@@ -40,49 +38,18 @@ export function programSql(call: Call, handle: HandleAddress, database: "databas
 
 /** Program permission management carried through the owner-local Gateway. */
 export function programPermissions(call: Call, handle: HandleAddress): ProgramPermissions {
-  const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "allow" | "deny", name?: Name, permission?: PermissionRequest<Name>) => (
+  const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "allow" | "deny", name?: Name, permission?: PermissionRequestInput<Name>) => (
     call("/program/permissions", handle, permissionOperation, name, permission)
   )
-  const timed = (timeout: number): TimedProgramPermissions => ({
-    async request<Name extends PermissionName>(name: Name, permission: PermissionRequest<Name> = true) {
-      const identity = randomUUID()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      // Node has no Endpoint boundary to forget a timed-out request, so its
-      // authenticated connection must cancel the matching System dialog.
-      const expired = new Promise<null>(resolve => {
-        timer = setTimeout(() => {
-          void call("/program/permissions", handle, "cancel-request", identity).catch(() => undefined)
-          resolve(null)
-        }, timeout)
-      })
-
-      try {
-        const result = await Promise.race([
-          call<unknown>("/program/permissions", handle, "request", identity, name, permission),
-          expired
-        ])
-        return parsePermission(name, result)
-      } finally {
-        if (timer) clearTimeout(timer)
-      }
-    }
-  })
 
   return {
     async get(name) { return parsePermission(name, await operate("get", name)) },
     async all() { return parsePermissions(await operate("all")) },
     async allows(name, permission = true) { return await operate("allows", name, permission) === true },
     async allow(name, permission = true) { await operate("allow", name, permission) },
-    async deny(name) { await operate("deny", name) },
-    request: timed(defaultPermissionTimeout).request,
-    timeout(milliseconds) {
-      if (!Number.isFinite(milliseconds) || milliseconds < 0) throw new Error("A permission timeout must be a non-negative finite number")
-      return timed(milliseconds)
-    }
+    async deny(name) { await operate("deny", name) }
   }
 }
-
-const defaultPermissionTimeout = 120_000
 
 function written(statement: string | TemplateStringsArray, rest: unknown[]): [string, unknown[]] {
   if (typeof statement === "string") return [statement, Array.isArray(rest[0]) ? rest[0] as unknown[] : []]

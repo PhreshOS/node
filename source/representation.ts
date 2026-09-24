@@ -196,6 +196,17 @@ export default class SystemRepresentation {
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
     subscribe("/auth/program/pinned", (value, pinned) => this.pinProgram(value, pinned === true))
     subscribe("/auth/program/permissions-change", value => this.changeProgramPermissions(value))
+    subscribe("/auth/program/log", (reference, value) => {
+      if (typeof reference === "string") this.emit(`program-log:${reference}`, value)
+    })
+
+    subscribe("/auth/logs/log", value => this.emit("system-log", value))
+
+    subscribe("/auth/permission/request", value => this.emit("permission:request", value))
+    subscribe("/auth/permission/resolve", (request, permission) => {
+      if (record(request) && typeof request.identity === "string") this.emit(`permission:${request.identity}:resolve`, permission)
+      this.emit("permission:resolve", request, permission)
+    })
 
     subscribe("/auth/process/created", value => this.createProcess(value))
     subscribe("/auth/process/server-ready", identity => this.serverReady(identity))

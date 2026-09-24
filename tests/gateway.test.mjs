@@ -343,6 +343,15 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     client: null,
     clientEndpoint: null
   }
+  let permissionPending = true
+  const permissionRequest = {
+    identity: "permission-request",
+    from: { kind: "server", process: { ...parentRecord, program } },
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 120_000),
+    name: "uploads",
+    scope: []
+  }
   let creations = 0
   const server = createGateway(address, {
     snapshot: {
@@ -371,19 +380,59 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
         server: { location: join(home, "server"), worker: "main.js" }
       }
       if (event === "/auth/program/store") return "stored"
-      if (event === "/auth/program/logs") return [{ value: 1 }]
+      if (event === "/auth/program/logs") {
+        await publish("/auth/program/log", program.reference, {
+          createdAt: 1,
+          process: "main",
+          source: "server",
+          kind: "stdout",
+          content: "ready"
+        })
+        return [{ value: 1 }]
+      }
+      if (event === "/auth/logs/query") {
+        await publish("/auth/logs/log", {
+          createdAt: 2,
+          level: "error",
+          source: "process",
+          kind: "unexpectedServerEndpointExit",
+          content: "Example stopped unexpectedly.",
+          data: { program: "example", process: "main" }
+        })
+        return [{ value: 2 }]
+      }
+      if (event === "/auth/permissions/requests") return permissionPending ? [permissionRequest] : []
+      if (event === "/auth/permissions/pending") return permissionPending
+      if (event === "/auth/permissions/allow" || event === "/auth/permissions/deny" || event === "/auth/permissions/cancel") {
+        if (!permissionPending) throw new Error("The permission request does not exist")
+        permissionPending = false
+        const permission = event.endsWith("/allow") ? [] : event.endsWith("/deny") ? false : null
+        await publish("/auth/permission/resolve", permissionRequest, permission)
+        return
+      }
       if (event === "/auth/program/permissions") {
         if (input[1] === "all") return { all: [] }
+        if (input[1] === "get") {
+          if (input[2] === "all") return []
+          return input[2] === "network" ? program.permissions.network ?? null : null
+        }
         if (input[1] === "allows") return true
         if (input[1] === "allow") {
+          program.permissions = { network: ["https://api.example.com"] }
           await publish("/auth/program/permissions-change", {
             ...program,
-            permissions: { network: ["https://api.example.com"] }
+            permissions: program.permissions
           })
           return
         }
-        if (input[1] === "deny" || input[1] === "cancel-request") return
-        if (input[1] === "request") return []
+        if (input[1] === "deny") {
+          program.permissions = { network: false }
+          await publish("/auth/program/permissions-change", {
+            ...program,
+            permissions: program.permissions
+          })
+          return
+        }
         return []
       }
 
@@ -432,7 +481,25 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal((await system.program.list())[0], created)
     assert.equal(await created.data.path(), join(home, "data"))
     assert.equal(await created.store.get("state"), "stored")
+    const programLog = created.logs.wait("log")
     assert.deepEqual(await created.logs.query("select 1"), [{ value: 1 }])
+    assert.deepEqual(await programLog, {
+      createdAt: 1,
+      process: "main",
+      source: "server",
+      kind: "stdout",
+      content: "ready"
+    })
+    const systemLog = system.logs.wait("log")
+    assert.deepEqual(await system.logs.query("select 2"), [{ value: 2 }])
+    assert.deepEqual(await systemLog, {
+      createdAt: 2,
+      level: "error",
+      source: "process",
+      kind: "unexpectedServerEndpointExit",
+      content: "Example stopped unexpectedly.",
+      data: { program: "example", process: "main" }
+    })
     assert.deepEqual(await created.permissions.get("all"), [])
     const programPermissions = created.wait("permissions")
     const systemPermissions = system.program.wait("permissions")
@@ -443,7 +510,23 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       permissions: { network: ["https://api.example.com"] }
     })
     await created.permissions.deny("network")
-    assert.deepEqual(await created.permissions.request("uploads"), [])
+    assert.equal(await created.permissions.get("network"), false)
+
+    const pendingRequests = await system.permissions.requests()
+    assert.equal(pendingRequests.length, 1)
+    const pendingRequest = pendingRequests[0]
+    assert(pendingRequest.from instanceof ServerEndpoint)
+    assert.equal(pendingRequest.name, "uploads")
+    assert.deepEqual(pendingRequest.scope, [])
+    assert.equal(await pendingRequest.pending(), true)
+    const requestResolution = pendingRequest.wait("resolve")
+    const systemResolution = system.permissions.wait("permissionResolve")
+    await pendingRequest.deny()
+    assert.equal(await requestResolution, false)
+    assert.deepEqual(await systemResolution, { request: pendingRequest, permission: false })
+    assert.equal(await pendingRequest.pending(), false)
+    await assert.rejects(pendingRequest.cancel(), /does not exist/)
+
     assert.equal((await created.icon()).type, "image/png")
     assert.equal(await created.agent(), "Program agent")
     assert.deepEqual(await created.definition(), {
