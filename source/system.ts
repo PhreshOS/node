@@ -82,6 +82,7 @@ import {
   type WindowEvents,
   type WindowGeometry,
 } from "@phreshos/core"
+import clientMemory from "./client-memory.js"
 import { homedir } from "node:os"
 import { gatewayAddress } from "./address.js"
 import Events from "./events.js"
@@ -639,9 +640,9 @@ class ProgramHandle extends CoreProgram {
       .map(process => processHandle(this.system, process))
   }
 
-  public async firstProcess() { return (await this.processes()).sort(chronological)[0] ?? null }
+  public async oldestProcess() { return (await this.processes()).sort(chronological)[0] ?? null }
 
-  public async lastProcess() { return (await this.processes()).sort(chronological).at(-1) ?? null }
+  public async newestProcess() { return (await this.processes()).sort(chronological).at(-1) ?? null }
 
   public async findProcess(identityOrName: string) {
     return (await this.processes()).find(process => process.identity === identityOrName || process.name === identityOrName) ?? null
@@ -908,6 +909,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
   public readonly traffic: EndpointTrafficHandle
   public readonly lifecycle: EndpointLifecycle
   public readonly window: SystemWindow
+  public readonly memory
   private readonly base: EndpointOperations
 
   public constructor(system: System, owner: ProcessHandle) {
@@ -924,6 +926,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
     this.wait = this.base.wait
     this.events = this.base.events
     this.window = new SystemWindow(system, owner)
+    this.memory = clientMemory(representation(system), owner.identity)
   }
 
   public process() { return this.base.process() }

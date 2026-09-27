@@ -40,6 +40,7 @@ export type Observation =
   | Readonly<{ scope: "endpoint", process: string, endpoint: "server" | "client", event: string | null }>
   | Readonly<{ scope: "traffic", process: string, endpoint: "server" | "client", kind: "publish" | "ask" | "answer", event: string | null }>
   | Readonly<{ scope: "service", address: ServiceAddress, kind: "events" | "lifecycle", event: string | null }>
+  | Readonly<{ scope: "clientMemory", process: string, key: string, event: null }>
 
 type Listener = (...values: unknown[]) => unknown
 
