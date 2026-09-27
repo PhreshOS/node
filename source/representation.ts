@@ -200,6 +200,9 @@ export default class SystemRepresentation {
     subscribe("/auth/program/log", (reference, value) => {
       if (typeof reference === "string") this.emit(`program-log:${reference}`, value)
     })
+    subscribe("/auth/program/store-change", (reference, key, snapshot) => {
+      if (typeof reference === "string" && typeof key === "string") this.emit(`program-store:${reference}`, key, snapshot)
+    })
 
     subscribe("/auth/logs/log", value => this.emit("system-log", value))
 

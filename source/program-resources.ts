@@ -12,19 +12,64 @@ type Call = <Result = unknown>(event: string, ...values: unknown[]) => Promise<R
 type HandleAddress = Readonly<{ identity: string, reference: string }>
 
 /** Program-owned key-value storage carried through the owner-local Gateway. */
-export function programStore(call: Call, handle: HandleAddress): ProgramStore {
-  const operate = <Result>(storeOperation: string, key?: string | string[], value?: unknown, ttl?: number) => (
+export function programStore(call: Call, handle: HandleAddress, onChange: (subscriber: (key: string, snapshot: StoreSnapshot) => void) => () => void): ProgramStore {
+  const snapshots = new Map<string, StoreSnapshot>()
+  const local = new Set<(key: string, snapshot: StoreSnapshot) => void>()
+  const notify = (key: string, snapshot: StoreSnapshot) => { for (const listener of local) listener(key, snapshot) }
+  const operate = <Result>(storeOperation: string, key?: string | string[], value?: unknown, ttl?: unknown) => (
     call<Result>("/program/store", handle, storeOperation, key, value, ttl)
   )
 
   return {
     get: <Value>(key: string) => operate<Value | undefined>("get", key),
-    set: <Value>(key: string, value: Value, ttl?: number) => operate<boolean>("set", key, value, ttl),
-    delete: (key: string | string[]) => operate<boolean>("delete", key),
+    async set<Value>(key: string, value: Value, ttl?: number) {
+      const result = await operate<boolean>("set", key, value, ttl)
+      snapshots.delete(key)
+      return result
+    },
+    async getOrSet<Value>(key: string, initial: Value) {
+      const snapshot = await operate<StoreSnapshot>("getOrSet", key, initial)
+      notify(key, snapshot)
+      return snapshot.value as Value
+    },
+    async update<Value>(key: string, updater: (current: Value | undefined) => Value) {
+      let snapshot = snapshots.get(key) ?? await operate<StoreSnapshot>("snapshot", key)
+      for (;;) {
+        const next = updater(snapshot.value as Value | undefined)
+        const result = await operate<StoreComparison>("compareAndSet", key, next, snapshot)
+        snapshots.set(key, result.snapshot)
+        notify(key, result.snapshot)
+        if (result.changed) return result.snapshot.value as Value
+        snapshot = result.snapshot
+      }
+    },
+    async delete(key: string | string[]) {
+      const result = await operate<boolean>("delete", key)
+      for (const name of Array.isArray(key) ? key : [key]) snapshots.delete(name)
+      return result
+    },
     has: (key: string) => operate<boolean>("has", key),
-    clear: () => operate<void>("clear")
+    async clear() { await operate<void>("clear"); snapshots.clear() },
+    subscribe<Value>(key: string, subscriber: (value: Value | undefined) => unknown) {
+      let active = true
+      let latest: StoreSnapshot | undefined
+      const deliver = (snapshot: StoreSnapshot) => {
+        if (!active || (latest?.run === snapshot.run && latest.revision >= snapshot.revision)) return
+        latest = snapshot
+        snapshots.set(key, snapshot)
+        subscriber(snapshot.value as Value | undefined)
+      }
+      const stop = onChange((changedKey, snapshot) => { if (changedKey === key) deliver(snapshot) })
+      const localListener = (changedKey: string, snapshot: StoreSnapshot) => { if (changedKey === key) deliver(snapshot) }
+      local.add(localListener)
+      void operate<StoreSnapshot>("snapshot", key).then(deliver).catch(() => undefined)
+      return () => { active = false; local.delete(localListener); stop() }
+    }
   }
 }
+
+type StoreSnapshot = { run: string, revision: number, value: unknown }
+type StoreComparison = { changed: boolean, snapshot: StoreSnapshot }
 
 /** Program-owned SQL capability carried through the owner-local Gateway. */
 export function programSql(call: Call, handle: HandleAddress, database: "database" | "logs"): ProgramSql {

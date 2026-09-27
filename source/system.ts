@@ -22,6 +22,8 @@ import {
   parseSystemLogRecord,
   parseSessionEndSnapshot,
   parseSessionSnapshot,
+  parseSystemProgramListOptions,
+  parseSystemServiceListOptions,
   type AuthenticationCredentials,
   type Appearance,
   type AppearanceUpdate,
@@ -67,9 +69,11 @@ import {
   type SystemProcessEvents,
   type SystemProcess,
   type SystemProgram,
+  type SystemProgramListOptions,
   type SystemProgramEvents,
   type SystemUploads,
   type SystemService,
+  type SystemServiceListOptions,
   type SystemServiceEvents,
   type SystemLogRecord,
   type SystemLogs,
@@ -474,13 +478,8 @@ class ServiceRegistry extends Events<SystemServiceEvents, never> implements Syst
     })
   }
 
-  public async list(): Promise<(CoreServerService | CoreClientService)[]> {
-    const addresses = await representation(this.system).call<unknown[]>("/process/service/list")
-    return addresses.map(value => this.prepare(parseServiceAddress(value)))
-  }
-
-  public async search(name: string): Promise<(CoreServerService | CoreClientService)[]> {
-    const addresses = await representation(this.system).call<unknown[]>("/process/service/search", name)
+  public async list(options: SystemServiceListOptions = {}): Promise<(CoreServerService | CoreClientService)[]> {
+    const addresses = await representation(this.system).call<unknown[]>("/process/service/list", parseSystemServiceListOptions(options))
     return addresses.map(value => this.prepare(parseServiceAddress(value)))
   }
 
@@ -505,9 +504,10 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
     })
   }
 
-  public async list(onlyInstalled = false) {
+  public async list(options: SystemProgramListOptions = {}) {
+    const { installed } = parseSystemProgramListOptions(options)
     return [...representation(this.system).programs.values()]
-      .filter(program => !onlyInstalled || program.installed)
+      .filter(program => installed === undefined || program.installed === installed)
       .sort((left, right) => left.identity.localeCompare(right.identity))
       .map(program => programHandle(this.system, program))
   }
@@ -575,7 +575,9 @@ class ProgramHandle extends CoreProgram {
     const call = <Result = unknown>(event: string, ...values: unknown[]) => representation(system).call<Result>(event, ...values)
     this.data = filesystemStorage(() => programStoragePath(system, address, "data"), `Program "${this.identity}" data`, () => connectedSignal(system))
     this.cache = filesystemStorage(() => programStoragePath(system, address, "cache"), `Program "${this.identity}" cache`, () => connectedSignal(system))
-    this.store = programStore(call, address)
+    this.store = programStore(call, address, subscriber => representation(system).on(`program-store:${this.reference}`, (key, snapshot) => {
+      if (typeof key === "string" && snapshot && typeof snapshot === "object") subscriber(key, snapshot as { run: string, revision: number, value: unknown })
+    }))
     const logQuery = programSql(call, address, "logs")
     const logEvents = new Events<LogEvents<ProgramLogRecord>>(["log"], (event, subscriber) => {
       if (event !== "log") throw new Error("Program log events are named")

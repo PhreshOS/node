@@ -189,7 +189,7 @@ test("System.connect exposes the shared System contract over one owner-local add
         return null
       }
       if (event === "/auth/uploads/access") return { path: join(home, "uploads"), limit: 1024 }
-      if (event === "/auth/process/service/list" || event === "/auth/process/service/search") {
+      if (event === "/auth/process/service/list") {
         return [{ program: "example", process: "main", endpoint: "server" }]
       }
       if (event === "/auth/process/service/available") return true
@@ -251,7 +251,8 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(typeof clientService.publish, "function")
     assert.equal(typeof clientService.waitReady, "function")
     assert.deepEqual((await system.service.list()).map(service => service.address()), [serverService.address()])
-    assert.deepEqual((await system.service.search("main")).map(service => service.address()), [serverService.address()])
+    assert.deepEqual((await system.service.list({ name: "main" })).map(service => service.address()), [serverService.address()])
+    await assert.rejects(system.service.list("main"), /object/)
     assert.equal(await serverService.available(), true)
     const metadata = await serverService.programMetadata()
     await serverService.programIcon()
@@ -479,6 +480,9 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(created.assetId, program.assetId)
     assert.equal(await system.program.find("example"), created)
     assert.equal((await system.program.list())[0], created)
+    assert.deepEqual(await system.program.list({ installed: true }), [])
+    assert.deepEqual(await system.program.list({ installed: false }), [created])
+    await assert.rejects(system.program.list(true), /object/)
     assert.equal(await created.data.path(), join(home, "data"))
     assert.equal(await created.store.get("state"), "stored")
     const programLog = created.logs.wait("log")
