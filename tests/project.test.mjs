@@ -36,14 +36,15 @@ test("a Client development command receives its assigned address", async context
     import { createServer } from "node:http"
 
     const port = Number(process.env.PHRESHOS_CLIENT_PORT)
+    const host = process.env.PHRESHOS_CLIENT_HOST
     const base = process.env.PHRESHOS_CLIENT_BASE
 
-    await writeFile(${JSON.stringify(observation)}, JSON.stringify({ port, base }))
+    await writeFile(${JSON.stringify(observation)}, JSON.stringify({ port, host, base }))
 
     createServer((request, response) => {
       response.statusCode = request.url?.startsWith(base) ? 200 : 404
       response.end()
-    }).listen(port)
+    }).listen(port, host)
   `)
 
   let definition
@@ -85,7 +86,8 @@ test("a Client development command receives its assigned address", async context
   assert.deepEqual(events, ["started", "exited"])
   assert.equal(environment.base, `/program/${assetId}/assets/`)
   assert.equal(Number.isInteger(environment.port), true)
-  assert.equal(definition.client.location, `http://localhost:${environment.port}/`)
+  assert.equal(environment.host, "127.0.0.1")
+  assert.equal(definition.client.location, `http://127.0.0.1:${environment.port}/`)
   assert.equal(definition.installLaunch, true)
   await assert.rejects(fetch(definition.client.location))
 })

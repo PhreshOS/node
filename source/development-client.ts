@@ -24,7 +24,9 @@ export default class DevelopmentClient {
 
   /** Select the development address without starting the authored command. */
   public static async prepare(client: ClientConfig, directory: string) {
-    const url = client.devUrl ?? `http://localhost:${await availablePort()}/`
+    // An address, not a name: `localhost` means IPv6 to one program and IPv4 to another on some
+    // machines, so the development server, this readiness check, and the System could miss each other.
+    const url = client.devUrl ?? `http://${loopback}:${await availablePort()}/`
     if (client.devCommand) await assertAvailable(url)
     return new DevelopmentClient(url, client.devCommand ?? null, directory)
   }
@@ -42,6 +44,7 @@ export default class DevelopmentClient {
       if (this.command) {
         this.commandProcess = new OwnedCommand(this.command, this.directory, {
           PHRESHOS_CLIENT_BASE: base,
+          PHRESHOS_CLIENT_HOST: hostOf(this.url),
           PHRESHOS_CLIENT_PORT: String(portOf(this.url))
         })
       }
@@ -176,7 +179,7 @@ async function availablePort() {
 
   return await new Promise<number>((done, fail) => {
     server.once("error", fail)
-    server.listen(0, "localhost", () => {
+    server.listen(0, loopback, () => {
       const address = server.address()
       if (!address || typeof address === "string") {
         server.close()
@@ -206,6 +209,14 @@ async function assertAvailable(url: string) {
   })
 
   if (occupied) throw new Error(`Client development URL is already in use: ${url}`)
+}
+
+/** The address a development server listens on, and is reached at, when the Program names none. */
+const loopback = "127.0.0.1"
+
+/** The host part of an address, without the brackets an IPv6 address carries in a URL. */
+function hostOf(url: string) {
+  return new URL(url).hostname.replace(/^\[(.*)\]$/, "$1")
 }
 
 function portOf(url: string) {
