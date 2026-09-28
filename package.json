@@ -36,8 +36,8 @@
     "prepack": "node --run build"
   },
   "dependencies": {
-    "@the-link/ipc": "^0.2.1",
-    "@the-link/messagepack": "^0.1.0",
+    "@the-link/ipc": "^0.3.0",
+    "@the-link/messagepack": "^0.2.0",
     "adm-zip": "^0.6.0",
     "jiti": "^2.7.0"
   },
