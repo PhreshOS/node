@@ -1,4 +1,16 @@
 import {
+  opensType,
+  OpenRequest as CoreOpenRequest,
+  parseOpenRequestSnapshot,
+  parseOpenTarget,
+  parseOpeningDefaults,
+  parseProgramSnapshot,
+  type OpenRequestEvents,
+  type OpenRequestSnapshot,
+  type OpenTarget,
+  type SystemOpening,
+  type SystemOpeningEvents,
+  parseSystemAbout,
   Connection as CoreConnection,
   ClientEndpoint as CoreClientEndpoint,
   ClientService as CoreClientService,
@@ -125,6 +137,7 @@ const processSnapshots = new WeakMap<object, ProcessIdentityState>()
 export class System implements CoreSystem {
   public readonly storage: Storage
   public readonly appearance: WritableAppearance
+  public readonly opening: SystemOpening
   public readonly program: SystemProgram
   public readonly process: SystemProcess
   public readonly authentication: SystemAuthentication
@@ -133,6 +146,14 @@ export class System implements CoreSystem {
   public readonly service: SystemService
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
+
+  public async open(target: OpenTarget) {
+    await representation(this).call("/open", parseOpenTarget(target))
+  }
+
+  public async about() {
+    return parseSystemAbout(await representation(this).call("/about"))
+  }
 
   public execute<Request extends ExecuteRequest>(request: Request): Promise<ExecuteResult<Request>> {
     return executeRequest(this, request)
@@ -151,6 +172,7 @@ export class System implements CoreSystem {
     connection.onDisconnect(() => void closeSystem(this, new Error("This System connection is closed")))
     this.storage = nativeStorage(homedir(), "the native filesystem", () => connectedSignal(this))
     this.appearance = new SystemAppearance(this)
+    this.opening = new OpeningRegistry(this)
     this.program = new ProgramRegistry(this)
     this.process = new ProcessRegistry(this)
     this.authentication = new AuthenticationRegistry(this)
@@ -333,6 +355,87 @@ class SystemLogsHandle extends Events<LogEvents<SystemLogRecord>> implements Sys
   }
 }
 
+class OpeningRegistry extends Events<SystemOpeningEvents> implements SystemOpening {
+  public constructor(private readonly system: System) {
+    super(["openRequest", "openResolve"], (event, subscriber) => {
+      if (event === null) throw new Error("Opening events are named")
+      const route = event === "openRequest" ? "opening:request" : "opening:resolve"
+      return representation(system).on(route, (...values) => subscriber(openingRegistryEvent(system, event as keyof SystemOpeningEvents, values)))
+    })
+  }
+
+  public async requests() {
+    const values = await representation(this.system).call<unknown[]>("/opening/requests")
+    return values.map(value => openRequestHandle(this.system, value))
+  }
+
+  public async defaults() {
+    const defaults = parseOpeningDefaults(await representation(this.system).call("/opening/defaults"))
+    return Object.freeze(Object.fromEntries(Object.entries(defaults).map(([type, program]) => [type, knownProgram(this.system, program.identity)])))
+  }
+
+  public async setDefault(type: string, program: CoreProgram) { await representation(this.system).call("/opening/set-default", type, program.identity) }
+  public async clearDefault(type: string) { await representation(this.system).call("/opening/clear-default", type) }
+}
+
+class OpenRequestHandle extends CoreOpenRequest {
+  public readonly subscribe: CoreOpenRequest["subscribe"]
+  public readonly wait: CoreOpenRequest["wait"]
+  public readonly events: CoreOpenRequest["events"]
+  public readonly identity: string
+  public readonly from
+  public readonly createdAt: Date
+  public readonly target
+  public readonly programs
+
+  public constructor(private readonly system: System, snapshot: OpenRequestSnapshot) {
+    super()
+    this.identity = snapshot.identity
+    this.from = snapshot.from ? endpointFromReference(system, snapshot.from)! : null
+    this.createdAt = snapshot.createdAt
+    this.target = snapshot.target
+    this.programs = snapshot.programs.map(program => knownProgram(system, program.identity))
+    const events = new Events<OpenRequestEvents>(["resolve"], (event, subscriber) => {
+      if (event === null) throw new Error("OpenRequest events are named")
+      return representation(system).on(`opening:${this.identity}:resolve`, value => subscriber(openedWith(system, value)))
+    })
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
+  }
+
+  public async pending() {
+    return await representation(this.system).call("/opening/pending", this.identity) === true
+  }
+
+  public async choose(program: CoreProgram, options: Readonly<{ always?: boolean }> = {}) {
+    await representation(this.system).call("/opening/choose", this.identity, program.identity, options)
+  }
+
+  public async cancel() { await representation(this.system).call("/opening/cancel", this.identity) }
+}
+
+function openRequestHandle(system: System, value: unknown) {
+  const snapshot = parseOpenRequestSnapshot(value)
+  return systemState(system).handles.obtain(`opening:${snapshot.identity}`, () => new OpenRequestHandle(system, snapshot))
+}
+
+function openingRegistryEvent(system: System, event: keyof SystemOpeningEvents, values: unknown[]) {
+  const request = openRequestHandle(system, values[0])
+  if (event === "openRequest") return request
+  return { request, program: openedWith(system, values[1]) }
+}
+
+/** The Program a request was opened with, or `null` when it ended without one. */
+function openedWith(system: System, value: unknown) {
+  return value === null || value === undefined ? null : knownProgram(system, parseProgramSnapshot(value).identity)
+}
+
+/** The handle of a Program this connection already holds; opening is decided with `all`, so it holds every one. */
+function knownProgram(system: System, identity: string) {
+  return programHandle(system, required(representation(system).programs.get(identity), identity))
+}
+
 class PermissionRequestHandle extends CorePermissionRequest {
   public readonly subscribe: CorePermissionRequest["subscribe"]
   public readonly wait: CorePermissionRequest["wait"]
@@ -505,9 +608,10 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   }
 
   public async list(options: SystemProgramListOptions = {}) {
-    const { installed } = parseSystemProgramListOptions(options)
+    const { installed, opens } = parseSystemProgramListOptions(options)
     return [...representation(this.system).programs.values()]
       .filter(program => installed === undefined || program.installed === installed)
+      .filter(program => opens === undefined || opensType(program.opens ?? [], opens))
       .sort((left, right) => left.identity.localeCompare(right.identity))
       .map(program => programHandle(this.system, program))
   }
@@ -710,15 +814,15 @@ class ProgramStartup {
     return await representation(this.system).call<Launch | null>("/program/startup", this.program.address(), "get")
   }
 
-  public async enable(launch: Launch = {}) {
-    await this.change("enable", launch)
+  public async set(launch: Launch = {}) {
+    await this.change("set", launch)
   }
 
-  public async disable() {
-    await this.change("disable")
+  public async remove() {
+    await this.change("remove")
   }
 
-  private async change(operation: "enable" | "disable", launch?: Launch) {
+  private async change(operation: "set" | "remove", launch?: Launch) {
     await representation(this.system).call("/program/startup", this.program.address(), operation, launch)
   }
 }

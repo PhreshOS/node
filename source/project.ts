@@ -97,6 +97,7 @@ export class Project {
       installLaunch: launchValue(config.installLaunch),
       categories: config.categories,
       keywords: config.keywords,
+      opens: config.opens,
       website: config.website,
       permissions: config.permissions,
       icon: config.icon && resolve(this.directory, config.icon),
@@ -395,6 +396,7 @@ function packageDefinition(config: Config, version: string) {
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,
     keywords: config.keywords,
+    opens: config.opens,
     website: config.website,
     permissions: config.permissions,
     ...config.server && { server: {

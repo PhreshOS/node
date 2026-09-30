@@ -206,6 +206,11 @@ export default class SystemRepresentation {
 
     subscribe("/auth/logs/log", value => this.emit("system-log", value))
 
+    subscribe("/auth/opening/request", value => this.emit("opening:request", value))
+    subscribe("/auth/opening/resolve", (request, program) => {
+      if (record(request) && typeof request.identity === "string") this.emit(`opening:${request.identity}:resolve`, program)
+      this.emit("opening:resolve", request, program)
+    })
     subscribe("/auth/permission/request", value => this.emit("permission:request", value))
     subscribe("/auth/permission/resolve", (request, permission) => {
       if (record(request) && typeof request.identity === "string") this.emit(`permission:${request.identity}:resolve`, permission)
