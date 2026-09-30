@@ -59,7 +59,7 @@ import {
   type ProgramCommandChunk,
   type ProgramInstallOptions,
   type ProgramUninstallOptions,
-  type ProgramIconSize,
+  type IconSize,
   type ProgramProcessRunEvent as CoreProgramProcessRunEvent,
   type ProgramProcessRunOptions as CoreProgramProcessRunOptions,
   type ProgramSql,
@@ -153,6 +153,12 @@ export class System implements CoreSystem {
 
   public async about() {
     return parseSystemAbout(await representation(this).call("/about"))
+  }
+
+  public async icon(size: IconSize = "medium") {
+    const value = await representation(this).call<unknown>("/icon", size)
+    if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid System icon")
+    return new Blob([Uint8Array.from(value)], { type: "image/png" })
   }
 
   public execute<Request extends ExecuteRequest>(request: Request): Promise<ExecuteResult<Request>> {
@@ -720,7 +726,7 @@ class ProgramHandle extends CoreProgram {
     this.snapshot = snapshot
   }
 
-  public async icon(size: ProgramIconSize = "medium") {
+  public async icon(size: IconSize = "medium") {
     const value = await representation(this.system).call<unknown>("/program/icon", this.address(), size)
     if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) throw new Error("The System returned an invalid Program icon")
     return new Blob([Uint8Array.from(value)], { type: "image/png" })
@@ -1107,7 +1113,7 @@ class ServiceBase {
     return parseServiceProgramMetadata(value)
   }
 
-  public async programIcon(size: ProgramIconSize = "medium") {
+  public async programIcon(size: IconSize = "medium") {
     const value = await representation(this.system).call<unknown>("/process/service/program-icon", this.serviceAddress, size)
     return parseServiceProgramIcon(value)
   }
@@ -1139,7 +1145,7 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
   public override programMetadata() { return this.base.programMetadata() }
-  public override programIcon(size?: ProgramIconSize) { return this.base.programIcon(size) }
+  public override programIcon(size?: IconSize) { return this.base.programIcon(size) }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
@@ -1174,7 +1180,7 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
   public override programMetadata() { return this.base.programMetadata() }
-  public override programIcon(size?: ProgramIconSize) { return this.base.programIcon(size) }
+  public override programIcon(size?: IconSize) { return this.base.programIcon(size) }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
