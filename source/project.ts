@@ -1,6 +1,7 @@
 import {
   isRelativeValue,
   parseLaunch,
+  parseProcessDefaults,
   layers,
   type ClientConfig,
   type Config,
@@ -95,6 +96,7 @@ export class Project {
       version: config.version,
       description: config.description,
       installLaunch: launchValue(config.installLaunch),
+      process: config.process && parseProcessDefaults(config.process),
       categories: config.categories,
       keywords: config.keywords,
       opens: config.opens,
@@ -295,6 +297,7 @@ function validateConfig(config: Config) {
   for (const value of [config.installLaunch]) {
     if (value !== undefined && value !== true) parseLaunch(value)
   }
+  if (config.process !== undefined) parseProcessDefaults(config.process)
   if (typeof config.identity !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(config.identity)) {
     throw new Error("A Program's identity must be kebab-case")
   }
@@ -392,6 +395,7 @@ function packageDefinition(config: Config, version: string) {
     version,
     description: config.description,
     installLaunch: launchValue(config.installLaunch),
+    process: config.process && parseProcessDefaults(config.process),
     icon: config.icon ? "icon.png" : undefined,
     agent: config.agent ? "agent.md" : undefined,
     categories: config.categories,
