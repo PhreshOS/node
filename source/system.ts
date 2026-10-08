@@ -56,6 +56,7 @@ import {
   type Position,
   type ProgramDefinition,
   type ProgramEvents,
+  type ProgramStartupEvents,
   type ProgramCommandChunk,
   type ProgramInstallOptions,
   type ProgramUninstallOptions,
@@ -607,17 +608,18 @@ class ServiceRegistry extends Events<SystemServiceEvents, never> implements Syst
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
   public constructor(private readonly system: System) {
-    super(["create", "forget", "install", "uninstall", "pinned", "permissions"], (event, subscriber) => {
+    super(["create", "forget", "install", "uninstall", "pin", "changePermissions", "changeStartup"], (event, subscriber) => {
       if (event === null) throw new Error("System Program events are named")
       return representation(system).on(`program:${event}`, (...values) => subscriber(this.event(event, values)))
     })
   }
 
   public async list(options: SystemProgramListOptions = {}) {
-    const { installed, opens } = parseSystemProgramListOptions(options)
+    const { installed, opens, startup } = parseSystemProgramListOptions(options)
     return [...representation(this.system).programs.values()]
       .filter(program => installed === undefined || program.installed === installed)
       .filter(program => opens === undefined || opensType(program.opens ?? [], opens))
+      .filter(program => startup === undefined || program.startup === startup)
       .sort((left, right) => left.identity.localeCompare(right.identity))
       .map(program => programHandle(this.system, program))
   }
@@ -641,8 +643,9 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   private event(event: string, values: unknown[]) {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
     if (event === "uninstall") return { program, purge: values[1] === true }
-    if (event === "pinned") return { program, pinned: values[1] === true }
-    if (event === "permissions") return { program, permissions: parsePermissions((values[0] as ProgramState).permissions) }
+    if (event === "pin") return { program, pinned: values[1] === true }
+    if (event === "changePermissions") return { program, permissions: parsePermissions((values[0] as ProgramState).permissions) }
+    if (event === "changeStartup") return { program, launch: values[1] as Launch | null }
     return program
   }
 }
@@ -668,13 +671,12 @@ class ProgramHandle extends CoreProgram {
     this.reference = snapshot.reference
     this.identity = snapshot.identity
     const address = this.address()
-    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pinned", "permissions"], (event, subscriber) => {
+    const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pin"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
         if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
         else if (event === "uninstall") subscriber({ purge: values[0] === true })
-        else if (event === "pinned") subscriber(values[0] === true)
-        else if (event === "permissions") subscriber(parsePermissions(values[0]))
+        else if (event === "pin") subscriber(values[0] === true)
         else subscriber(undefined)
       })
     })
@@ -700,8 +702,8 @@ class ProgramHandle extends CoreProgram {
       events: logEvents.events
     }
     this.database = programSql(call, address, "database")
-    this.startup = new ProgramStartup(system, this)
-    this.permissions = programPermissions(call, address)
+    this.startup = new ProgramStartup(system, this, change(system, this.reference, "changeStartup", value => value as Launch | null))
+    this.permissions = programPermissions(call, address, change(system, this.reference, "changePermissions", value => parsePermissions(value)))
   }
 
   public get name() { return this.snapshot.name }
@@ -718,8 +720,7 @@ class ProgramHandle extends CoreProgram {
   public get client(): ClientDeclaration | null { return this.snapshot.client }
 
   public pinned() { return representation(this.system).call<boolean>("/program/pinned", this.address(), "get") }
-  public async pin() { await representation(this.system).call("/program/pinned", this.address(), "pin") }
-  public async unpin() { await representation(this.system).call("/program/pinned", this.address(), "unpin") }
+  public async pin(pinned = true) { await representation(this.system).call("/program/pinned", this.address(), pinned ? "pin" : "unpin") }
 
   public update(snapshot: ProgramState) {
     if (snapshot.reference !== this.reference) throw new Error("A Program handle cannot become another Program")
@@ -813,8 +814,24 @@ class ProgramHandle extends CoreProgram {
   public address() { return Object.freeze({ identity: this.identity, reference: this.reference }) }
 }
 
+/** One value's `change`, carried under its owner's own event name. */
+function change<Value>(system: System, reference: string, event: string, convert: (value: unknown) => Value) {
+  return new Events<{ change: Value }>(["change"], (name, subscriber) => {
+    if (name !== "change") throw new Error(`There is no "${String(name)}" event here`)
+    return representation(system).on(`program:${reference}:${event}`, value => subscriber(convert(value)))
+  })
+}
+
 class ProgramStartup {
-  public constructor(private readonly system: System, private readonly program: ProgramHandle) {}
+  public readonly subscribe: Subscribable<ProgramStartupEvents, never>["subscribe"]
+  public readonly wait: Subscribable<ProgramStartupEvents, never>["wait"]
+  public readonly events: Subscribable<ProgramStartupEvents, never>["events"]
+
+  public constructor(private readonly system: System, private readonly program: ProgramHandle, changes: Subscribable<ProgramStartupEvents, never>) {
+    this.subscribe = changes.subscribe
+    this.wait = changes.wait
+    this.events = changes.events
+  }
 
   public async get() {
     return await representation(this.system).call<Launch | null>("/program/startup", this.program.address(), "get")

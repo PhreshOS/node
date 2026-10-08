@@ -4,8 +4,10 @@ import {
   type PermissionName,
   type PermissionRequestInput,
   type ProgramPermissions,
+  type ProgramPermissionsEvents,
   type ProgramSql,
-  type ProgramStore
+  type ProgramStore,
+  type Subscribable
 } from "@phreshos/core"
 
 type Call = <Result = unknown>(event: string, ...values: unknown[]) => Promise<Result>
@@ -82,12 +84,15 @@ export function programSql(call: Call, handle: HandleAddress, database: "databas
 }
 
 /** Program permission management carried through the owner-local Gateway. */
-export function programPermissions(call: Call, handle: HandleAddress): ProgramPermissions {
+export function programPermissions(call: Call, handle: HandleAddress, changes: Subscribable<ProgramPermissionsEvents, never>): ProgramPermissions {
   const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "allow" | "deny", name?: Name, permission?: PermissionRequestInput<Name>) => (
     call("/program/permissions", handle, permissionOperation, name, permission)
   )
 
   return {
+    subscribe: changes.subscribe,
+    wait: changes.wait,
+    events: changes.events,
     async get(name) { return parsePermission(name, await operate("get", name)) },
     async all() { return parsePermissions(await operate("all")) },
     async allows(name, permission = true) { return await operate("allows", name, permission) === true },

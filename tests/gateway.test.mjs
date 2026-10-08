@@ -314,6 +314,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     description: null,
     hasAgent: true,
     permissions: {},
+    startup: false,
     server: { start: true, service: false },
     client: null
   }
@@ -411,6 +412,12 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
         await publish("/auth/permission/resolve", permissionRequest, permission)
         return
       }
+      if (event === "/auth/program/startup") {
+        if (input[1] === "get") return program.startup ? { name: "background" } : null
+        program.startup = input[1] === "set"
+        await publish("/auth/program/startup-change", { ...program }, program.startup ? input[2] : null)
+        return
+      }
       if (event === "/auth/program/permissions") {
         if (input[1] === "all") return { all: [] }
         if (input[1] === "get") {
@@ -505,8 +512,8 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       data: { program: "example", process: "main" }
     })
     assert.deepEqual(await created.permissions.get("all"), [])
-    const programPermissions = created.wait("permissions")
-    const systemPermissions = system.program.wait("permissions")
+    const programPermissions = created.permissions.wait("change")
+    const systemPermissions = system.program.wait("changePermissions")
     await created.permissions.allow("network", ["https://api.example.com"])
     assert.deepEqual(await programPermissions, { network: ["https://api.example.com"] })
     assert.deepEqual(await systemPermissions, {
@@ -514,6 +521,17 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
       permissions: { network: ["https://api.example.com"] }
     })
     await created.permissions.deny("network")
+
+    const programStartup = created.startup.wait("change")
+    const systemStartup = system.program.wait("changeStartup")
+    await created.startup.set({ name: "background" })
+    assert.deepEqual(await programStartup, { name: "background" })
+    assert.deepEqual(await systemStartup, { program: created, launch: { name: "background" } })
+    assert.deepEqual(await system.program.list({ startup: true }), [created])
+    const removed = created.startup.wait("change")
+    await created.startup.remove()
+    assert.equal(await removed, null)
+    assert.deepEqual(await system.program.list({ startup: true }), [])
     assert.equal(await created.permissions.get("network"), false)
 
     const pendingRequests = await system.permissions.requests()
@@ -596,6 +614,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     description: null,
     hasAgent: false,
     permissions: {},
+    startup: false,
     server: { start: true, service: false },
     client: null
   }

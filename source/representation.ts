@@ -16,7 +16,7 @@ import {
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
-export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions }>
+export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions, startup: boolean }>
 
 export type WindowState = Omit<CoreWindowState, "front"> & Readonly<{ depth: number }>
 
@@ -197,6 +197,7 @@ export default class SystemRepresentation {
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
     subscribe("/auth/program/pinned", (value, pinned) => this.pinProgram(value, pinned === true))
     subscribe("/auth/program/permissions-change", value => this.changeProgramPermissions(value))
+    subscribe("/auth/program/startup-change", (value, launch) => this.changeProgramStartup(value, launch))
     subscribe("/auth/program/log", (reference, value) => {
       if (typeof reference === "string") this.emit(`program-log:${reference}`, value)
     })
@@ -296,16 +297,24 @@ export default class SystemRepresentation {
   private pinProgram(value: unknown, pinned: boolean) {
     const program = programState(value)
     this.programs.set(program.identity, program)
-    this.emit(`program:${program.reference}:pinned`, pinned)
-    this.emit("program:pinned", program, pinned)
+    this.emit(`program:${program.reference}:pin`, pinned)
+    this.emit("program:pin", program, pinned)
   }
 
   private changeProgramPermissions(value: unknown) {
     const program = programState(value)
     this.programs.set(program.identity, program)
     this.emit(`program:${program.reference}:change`, program)
-    this.emit(`program:${program.reference}:permissions`, program.permissions)
-    this.emit("program:permissions", program)
+    this.emit(`program:${program.reference}:changePermissions`, program.permissions)
+    this.emit("program:changePermissions", program)
+  }
+
+  private changeProgramStartup(value: unknown, launch: unknown) {
+    const program = programState(value)
+    this.programs.set(program.identity, program)
+    this.emit(`program:${program.reference}:change`, program)
+    this.emit(`program:${program.reference}:changeStartup`, launch)
+    this.emit("program:changeStartup", program, launch)
   }
 
   private createProcess(value: unknown) {
@@ -392,8 +401,10 @@ function programState(value: unknown): ProgramState {
   if (parsed.installed === undefined) throw new Error("The System returned a Program without installation state")
 
   const permissions = parsePermissions((value as { permissions?: unknown }).permissions)
+  const startup = (value as { startup?: unknown }).startup
+  if (typeof startup !== "boolean") throw new Error("The System returned a Program without startup state")
 
-  return { ...parsed, installed: parsed.installed, permissions }
+  return { ...parsed, installed: parsed.installed, permissions, startup }
 
 }
 
