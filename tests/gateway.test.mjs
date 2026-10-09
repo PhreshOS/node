@@ -598,6 +598,9 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await retainedParent.exited(), true)
     await assert.rejects(retainedParent.server.running(), /no longer exists/)
     await assert.rejects(retainedParent.client.running(), /no longer exists/)
+    // An ended Process still belongs to its Program, with the options it was launched with.
+    assert.equal(retainedParent.program().identity, created.identity)
+    assert.deepEqual(await retainedParent.options(), parentRecord.options)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(run.next(), /cancelled by test/)

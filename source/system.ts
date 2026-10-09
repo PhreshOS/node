@@ -914,8 +914,10 @@ class ProcessHandle extends CoreProcess {
     this.client = new ClientEndpointHandle(system, this)
   }
 
+  // A Process belongs to its Program for its whole life and after it ends, as its launch options
+  // stay what they were; both come from the snapshot it was created with, not from live state.
   public program() {
-    const snapshot = processState(this.system, this)
+    const snapshot = required(processSnapshots.get(this))
     return programHandle(this.system, required(representation(this.system).programs.get(snapshot.program), snapshot.program))
   }
 
@@ -931,7 +933,7 @@ class ProcessHandle extends CoreProcess {
   public async options<Options extends object = Readonly<Record<string, string>>>(): Promise<Readonly<Options>>
   public async options<Option extends string = string>(name: string): Promise<Option | undefined>
   public async options(name?: string) {
-    const options = processState(this.system, this).options
+    const options = required(processSnapshots.get(this)).options
     return name === undefined ? Object.freeze({ ...options }) : options[name]
   }
 
