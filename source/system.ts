@@ -728,6 +728,7 @@ class ProgramHandle extends CoreProgram {
   public get assetId() { return this.snapshot.assetId }
   public get version() { return this.snapshot.version }
   public get description() { return this.snapshot.description }
+  public get website() { return this.snapshot.website }
   public get categories() { return this.snapshot.categories }
   public get keywords() { return this.snapshot.keywords }
   public get opens() { return this.snapshot.opens }
@@ -895,6 +896,8 @@ class ProcessHandle extends CoreProcess {
   public readonly identity: string
   public readonly name: string | null
   public readonly startedAt: Date
+  public readonly options: Readonly<Record<string, string>>
+  public readonly opened: OpenTarget | null
   public readonly server: ServerEndpoint
   public readonly client: ClientEndpoint
 
@@ -910,6 +913,8 @@ class ProcessHandle extends CoreProcess {
     this.identity = snapshot.identity
     this.name = snapshot.name
     this.startedAt = new Date(snapshot.startedAt)
+    this.options = Object.freeze({ ...snapshot.options })
+    this.opened = snapshot.opened
     this.server = new ServerEndpointHandle(system, this)
     this.client = new ClientEndpointHandle(system, this)
   }
@@ -930,14 +935,6 @@ class ProcessHandle extends CoreProcess {
     return value === null ? null : processHandle(this.system, processIdentityState(value))
   }
 
-  public async options<Options extends object = Readonly<Record<string, string>>>(): Promise<Readonly<Options>>
-  public async options<Option extends string = string>(name: string): Promise<Option | undefined>
-  public async options(name?: string) {
-    const options = required(processSnapshots.get(this)).options
-    return name === undefined ? Object.freeze({ ...options }) : options[name]
-  }
-
-  public async opened() { return required(processSnapshots.get(this)).opened }
 
   public async exit() {
     await representation(this.system).call("/process/exit", this.identity)

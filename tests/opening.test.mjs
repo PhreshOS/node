@@ -11,7 +11,7 @@ test("a default's change reaches the owner with the type and the Program, or nul
   const home = await mkdtemp(join(tmpdir(), "phresh-opening-"))
   const program = {
     reference: "program-reference", identity: "preview", assetId: "preview-assets",
-    installed: true, name: "Preview", version: "0.0.0", description: null, categories: [], keywords: [], declaredPermissions: {}, hasAgent: false,
+    installed: true, name: "Preview", version: "0.0.0", description: null, website: null, categories: [], keywords: [], declaredPermissions: {}, hasAgent: false,
     permissions: {}, startup: false, server: null, client: null, opens: ["image/*"]
   }
   const defaults = {}

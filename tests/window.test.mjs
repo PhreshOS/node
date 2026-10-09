@@ -11,7 +11,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
   const home = await mkdtemp(join(tmpdir(), "phresh-window-"))
   const program = {
     reference: "program-reference", identity: "example", assetId: "example-assets",
-    installed: false, name: "Example", version: "0.0.0", description: null, categories: [], keywords: [], opens: [], declaredPermissions: {}, hasAgent: false,
+    installed: false, name: "Example", version: "0.0.0", description: null, website: null, categories: [], keywords: [], opens: [], declaredPermissions: {}, hasAgent: false,
     permissions: {}, startup: false,
     server: null,
     client: { sandbox: true, start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null }

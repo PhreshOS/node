@@ -314,6 +314,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     name: "Example",
     version: "0.0.0",
     description: null,
+    website: null,
     categories: [],
     keywords: [],
     opens: [],
@@ -593,7 +594,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await processCreated, started.value.process)
     assert.equal(await system.process.find(processRecord.identity), started.value.process)
     assert.equal((await created.processes())[0], started.value.process)
-    assert.equal(await started.value.process.options("mode"), "test")
+    assert.equal(started.value.process.options.mode, "test")
     const retainedParent = await started.value.process.parent()
     assert(retainedParent instanceof Process)
     assert.equal(retainedParent.identity, parentRecord.identity)
@@ -602,7 +603,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     await assert.rejects(retainedParent.client.running(), /no longer exists/)
     // An ended Process still belongs to its Program, with the options it was launched with.
     assert.equal(retainedParent.program().identity, created.identity)
-    assert.deepEqual(await retainedParent.options(), parentRecord.options)
+    assert.deepEqual(retainedParent.options, parentRecord.options)
 
     controller.abort(new Error("cancelled by test"))
     await assert.rejects(run.next(), /cancelled by test/)
@@ -635,6 +636,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     name: "Example",
     version: "0.0.0",
     description: null,
+    website: null,
     categories: [],
     keywords: [],
     opens: [],
