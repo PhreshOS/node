@@ -178,8 +178,8 @@ test("System.connect exposes the shared System contract over one owner-local add
         username: { minimumLength: 1, maximumLength: 64 },
         password: { minimumLength: 8, maximumLength: 1024 }
       }
-      if (event === "/auth/authentication/connections") return [{ identity: "connection-one", connected: true, session: null }]
-      if (event === "/auth/authentication/sessions") return [{ identity: "session-one", valid: true }]
+      if (event === "/auth/authentication/connections") return [{ identity: "connection-one", connected: true, session: null, connectedAt: new Date(0) }]
+      if (event === "/auth/authentication/sessions") return [{ identity: "session-one", valid: true, createdAt: new Date(1000) }]
       if (event === "/auth/authentication/set-credentials") {
         credentialChanges.push(values.at(-1))
         return null
@@ -224,6 +224,8 @@ test("System.connect exposes the shared System contract over one owner-local add
     })
     assert.equal((await system.authentication.connections())[0]?.identity, "connection-one")
     assert.equal((await system.authentication.sessions())[0]?.identity, "session-one")
+    assert.deepEqual((await system.authentication.sessions())[0]?.createdAt, new Date(1000))
+    assert.deepEqual((await system.authentication.connections())[0]?.connectedAt, new Date(0))
     await system.authentication.setCredentials({ username: "next", password: "next-password" })
     await system.authentication.signOutAllSessions()
     assert.deepEqual(credentialChanges, [{ username: "next", password: "next-password" }])

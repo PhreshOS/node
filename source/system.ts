@@ -25,6 +25,7 @@ import {
   isServiceAddress,
   parseEndpointReference,
   parseConnectionSnapshot,
+  parseConnectionState,
   parseAuthenticationRequirements,
   parseAuthenticationState,
   parseProgramDefinition,
@@ -35,6 +36,7 @@ import {
   parseSystemLogRecord,
   parseSessionEndSnapshot,
   parseSessionSnapshot,
+  parseSessionState,
   parseSystemProgramListOptions,
   parseSystemServiceListOptions,
   type AuthenticationCredentials,
@@ -517,9 +519,11 @@ class ConnectionHandle extends CoreConnection {
   public readonly wait: CoreConnection["wait"]
   public readonly events: CoreConnection["events"]
   public readonly identity: string
+  public readonly connectedAt: Date
   public constructor(private readonly system: System, snapshot: ConnectionSnapshot) {
     super()
     this.identity = snapshot.identity
+    this.connectedAt = snapshot.connectedAt
     const events = new Events<ConnectionEvents>(["sessionChange", "disconnect"], (event, subscriber) => {
       if (event === null) throw new Error("Connection events are named")
       return representation(system).on(`connection:${this.identity}:${event}`, value => {
@@ -533,8 +537,7 @@ class ConnectionHandle extends CoreConnection {
   }
 
   public async connected() {
-    const snapshot = parseConnectionSnapshot(await representation(this.system).call("/connection/state", this.identity))
-    return snapshot.connected
+    return parseConnectionState(await representation(this.system).call("/connection/state", this.identity)).connected
   }
 
   public async session() {
@@ -552,9 +555,11 @@ class SessionHandle extends CoreSession {
   public readonly wait: CoreSession["wait"]
   public readonly events: CoreSession["events"]
   public readonly identity: string
+  public readonly createdAt: Date
   public constructor(private readonly system: System, snapshot: SessionSnapshot) {
     super()
     this.identity = snapshot.identity
+    this.createdAt = snapshot.createdAt
     const events = new Events<SessionEvents>(["connectionAttach", "connectionDetach", "end"], (event, subscriber) => {
       if (event === null) throw new Error("Session events are named")
       return representation(system).on(`session:${this.identity}:${event}`, (...values) => {
@@ -568,8 +573,15 @@ class SessionHandle extends CoreSession {
   }
 
   public async valid() {
-    const snapshot = parseSessionSnapshot(await representation(this.system).call("/session/state", this.identity))
-    return snapshot.valid
+    return (await this.state()).valid
+  }
+
+  public async lastActiveAt() {
+    return (await this.state()).lastActiveAt
+  }
+
+  private async state() {
+    return parseSessionState(await representation(this.system).call("/session/state", this.identity))
   }
 
   public async connections() {
