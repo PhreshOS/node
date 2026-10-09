@@ -253,6 +253,8 @@ export default class SystemRepresentation {
     for (const event of ["move", "resize", "change-title", "change-header", "raise", "minimize", "maximize"] as const) {
       subscribe(`/auth/process/${event}`, value => this.changeWindow(event, value))
     }
+    // A position and a size set in one step are a move, a resize, or both, as the Window changed.
+    subscribe("/auth/process/set-geometry", value => this.changeWindowGeometry(value))
   }
 
   private connectionEvent(event: "create" | "disconnect", value: unknown) {
@@ -360,6 +362,17 @@ export default class SystemRepresentation {
     this.emit("process:exit", process, exit)
     const program = this.programs.get(process.program)
     if (program) this.emit(`program:${program.reference}:processExit`, process, exit)
+  }
+
+  private changeWindowGeometry(value: unknown) {
+    if (!record(value) || typeof value.identity !== "string" || !record(value.window)) return
+    const before = this.processes.get(value.identity)?.clientEndpoint?.window
+    if (!before) return
+    const after = windowState(value.window)
+    const moved = JSON.stringify(before.position) !== JSON.stringify(after.position)
+    const resized = JSON.stringify(before.size) !== JSON.stringify(after.size)
+    if (moved) this.changeWindow("move", value)
+    if (resized) this.changeWindow("resize", value)
   }
 
   private changeWindow(event: string, value: unknown) {

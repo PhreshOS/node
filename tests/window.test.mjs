@@ -48,10 +48,9 @@ test("Window flags and geometry cross the owner boundary independently", async (
       else if (operation === "set-header") window.header = input
       else throw new Error("Unexpected Window operation: " + operation)
       const changed = { identity, window: { ...window } }
-      if (operation === "set-geometry") {
-        await publish("/auth/process/move", changed)
-        await publish("/auth/process/resize", changed)
-      } else if (operation === "set-header") await publish("/auth/process/change-header", changed)
+      // As the System announces each change: a geometry set in one step is one notice.
+      if (operation === "set-geometry") await publish("/auth/process/set-geometry", changed)
+      else if (operation === "set-header") await publish("/auth/process/change-header", changed)
       else await publish("/auth/process/" + operation, changed)
       return changed
     }
@@ -83,6 +82,8 @@ test("Window flags and geometry cross the owner boundary independently", async (
     await current.setGeometry(geometry)
     assert.deepEqual(await moved, { x: geometry.x, y: geometry.y })
     assert.deepEqual(await resized, { width: geometry.width, height: geometry.height })
+    assert.deepEqual(await current.position(), { x: geometry.x, y: geometry.y })
+    assert.deepEqual(await current.size(), { width: geometry.width, height: geometry.height })
     assert.equal(await current.minimized(), true)
     assert.equal(await current.maximized(), true)
     await current.minimize(false)
