@@ -441,6 +441,14 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
           })
           return
         }
+        if (input[1] === "reset") {
+          program.permissions = {}
+          await publish("/auth/program/permissions-change", {
+            ...program,
+            permissions: program.permissions
+          })
+          return
+        }
         return []
       }
 
@@ -533,6 +541,10 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     assert.equal(await removed, null)
     assert.deepEqual(await system.program.list({ startup: true }), [])
     assert.equal(await created.permissions.get("network"), false)
+    const reset = created.permissions.wait("change")
+    await created.permissions.reset("network")
+    assert.deepEqual(await reset, {})
+    assert.equal(await created.permissions.get("network"), null)
 
     const pendingRequests = await system.permissions.requests()
     assert.equal(pendingRequests.length, 1)

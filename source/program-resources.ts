@@ -85,7 +85,7 @@ export function programSql(call: Call, handle: HandleAddress, database: "databas
 
 /** Program permission management carried through the owner-local Gateway. */
 export function programPermissions(call: Call, handle: HandleAddress, changes: Subscribable<ProgramPermissionsEvents, never>): ProgramPermissions {
-  const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "allow" | "deny", name?: Name, permission?: PermissionRequestInput<Name>) => (
+  const operate = <Name extends PermissionName>(permissionOperation: "all" | "get" | "allows" | "allow" | "deny" | "reset", name?: Name, permission?: PermissionRequestInput<Name>) => (
     call("/program/permissions", handle, permissionOperation, name, permission)
   )
 
@@ -97,7 +97,8 @@ export function programPermissions(call: Call, handle: HandleAddress, changes: S
     async all() { return parsePermissions(await operate("all")) },
     async allows(name, permission = true) { return await operate("allows", name, permission) === true },
     async allow(name, permission = true) { await operate("allow", name, permission) },
-    async deny(name) { await operate("deny", name) }
+    async deny(name) { await operate("deny", name) },
+    async reset(name) { await operate("reset", name) }
   }
 }
 

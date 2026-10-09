@@ -71,6 +71,7 @@ program.permissions.all()
 program.permissions.allows("network", ["https://api.example.com"])
 program.permissions.allow("all")
 program.permissions.deny("network")
+program.permissions.reset("network")
 connected.permissions.requests()
 // @ts-expect-error owner decisions and Endpoint requests are separate contracts.
 program.permissions.request("all")
