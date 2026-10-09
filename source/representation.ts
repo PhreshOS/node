@@ -212,6 +212,7 @@ export default class SystemRepresentation {
       if (record(request) && typeof request.identity === "string") this.emit(`opening:${request.identity}:resolve`, program)
       this.emit("opening:resolve", request, program)
     })
+    subscribe("/auth/opening/default-change", (type, program) => this.emit("opening:changeDefault", type, program))
     subscribe("/auth/permission/request", value => this.emit("permission:request", value))
     subscribe("/auth/permission/resolve", (request, permission) => {
       if (record(request) && typeof request.identity === "string") this.emit(`permission:${request.identity}:resolve`, permission)

@@ -72,10 +72,11 @@ program.permissions.allows("network", ["https://api.example.com"])
 program.permissions.allow("all")
 program.permissions.deny("network")
 program.permissions.reset("network")
+connected.opening.subscribe("changeDefault", ({ type, program }) => { type.toLowerCase(); program?.identity })
 connected.permissions.requests()
 // @ts-expect-error owner decisions and Endpoint requests are separate contracts.
 program.permissions.request("all")
-// @ts-expect-error Permission assignments are replaced or denied; they are never deleted.
+// @ts-expect-error Permission assignments are replaced, denied, or reset; there is no delete.
 program.permissions.delete("all")
 
 declare const process: Process

@@ -3,6 +3,7 @@ import {
   OpenRequest as CoreOpenRequest,
   parseOpenRequestSnapshot,
   parseOpenTarget,
+  parseOpenType,
   parseOpeningDefaults,
   parseProgramSnapshot,
   type OpenRequestEvents,
@@ -364,9 +365,9 @@ class SystemLogsHandle extends Events<LogEvents<SystemLogRecord>> implements Sys
 
 class OpeningRegistry extends Events<SystemOpeningEvents> implements SystemOpening {
   public constructor(private readonly system: System) {
-    super(["openRequest", "openResolve"], (event, subscriber) => {
+    super(["openRequest", "openResolve", "changeDefault"], (event, subscriber) => {
       if (event === null) throw new Error("Opening events are named")
-      const route = event === "openRequest" ? "opening:request" : "opening:resolve"
+      const route = event === "openRequest" ? "opening:request" : event === "openResolve" ? "opening:resolve" : "opening:changeDefault"
       return representation(system).on(route, (...values) => subscriber(openingRegistryEvent(system, event as keyof SystemOpeningEvents, values)))
     })
   }
@@ -428,6 +429,7 @@ function openRequestHandle(system: System, value: unknown) {
 }
 
 function openingRegistryEvent(system: System, event: keyof SystemOpeningEvents, values: unknown[]) {
+  if (event === "changeDefault") return { type: parseOpenType(values[0]), program: openedWith(system, values[1]) }
   const request = openRequestHandle(system, values[0])
   if (event === "openRequest") return request
   return { request, program: openedWith(system, values[1]) }
