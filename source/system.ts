@@ -712,6 +712,10 @@ class ProgramHandle extends CoreProgram {
   public get assetId() { return this.snapshot.assetId }
   public get version() { return this.snapshot.version }
   public get description() { return this.snapshot.description }
+  public get categories() { return this.snapshot.categories }
+  public get keywords() { return this.snapshot.keywords }
+  public get opens() { return this.snapshot.opens }
+  public get declaredPermissions() { return this.snapshot.declaredPermissions }
   public get hasAgent() { return this.snapshot.hasAgent }
   public get server(): EndpointDeclaration | null {
     return this.snapshot.server ? Object.freeze({

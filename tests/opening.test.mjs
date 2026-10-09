@@ -11,7 +11,7 @@ test("a default's change reaches the owner with the type and the Program, or nul
   const home = await mkdtemp(join(tmpdir(), "phresh-opening-"))
   const program = {
     reference: "program-reference", identity: "preview", assetId: "preview-assets",
-    installed: true, name: "Preview", version: "0.0.0", description: null, hasAgent: false,
+    installed: true, name: "Preview", version: "0.0.0", description: null, categories: [], keywords: [], declaredPermissions: {}, hasAgent: false,
     permissions: {}, startup: false, server: null, client: null, opens: ["image/*"]
   }
   const defaults = {}
@@ -41,6 +41,7 @@ test("a default's change reaches the owner with the type and the Program, or nul
   try {
     const preview = await system.program.find("preview")
     assert(preview)
+    assert.deepEqual(preview.opens, ["image/*"])
 
     const set = system.opening.wait("changeDefault", 1000)
     await system.opening.setDefault("image/*", preview)
