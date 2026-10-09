@@ -178,8 +178,8 @@ test("System.connect exposes the shared System contract over one owner-local add
         username: { minimumLength: 1, maximumLength: 64 },
         password: { minimumLength: 8, maximumLength: 1024 }
       }
-      if (event === "/auth/authentication/connections") return [{ identity: "connection-one", connected: true, session: null, connectedAt: new Date(0) }]
-      if (event === "/auth/authentication/sessions") return [{ identity: "session-one", valid: true, createdAt: new Date(1000) }]
+      if (event === "/auth/authentication/connections") return [{ identity: "connection-one", connected: true, session: null, connectedAt: new Date(0), device: "Chrome on macOS" }]
+      if (event === "/auth/authentication/sessions") return [{ identity: "session-one", valid: true, createdAt: new Date(1000), device: null }]
       if (event === "/auth/authentication/set-credentials") {
         credentialChanges.push(values.at(-1))
         return null

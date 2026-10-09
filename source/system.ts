@@ -520,10 +520,12 @@ class ConnectionHandle extends CoreConnection {
   public readonly events: CoreConnection["events"]
   public readonly identity: string
   public readonly connectedAt: Date
+  public readonly device: string | null
   public constructor(private readonly system: System, snapshot: ConnectionSnapshot) {
     super()
     this.identity = snapshot.identity
     this.connectedAt = snapshot.connectedAt
+    this.device = snapshot.device
     const events = new Events<ConnectionEvents>(["sessionChange", "disconnect"], (event, subscriber) => {
       if (event === null) throw new Error("Connection events are named")
       return representation(system).on(`connection:${this.identity}:${event}`, value => {
@@ -556,10 +558,12 @@ class SessionHandle extends CoreSession {
   public readonly events: CoreSession["events"]
   public readonly identity: string
   public readonly createdAt: Date
+  public readonly device: string | null
   public constructor(private readonly system: System, snapshot: SessionSnapshot) {
     super()
     this.identity = snapshot.identity
     this.createdAt = snapshot.createdAt
+    this.device = snapshot.device
     const events = new Events<SessionEvents>(["connectionAttach", "connectionDetach", "end"], (event, subscriber) => {
       if (event === null) throw new Error("Session events are named")
       return representation(system).on(`session:${this.identity}:${event}`, (...values) => {
