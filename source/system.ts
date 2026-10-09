@@ -937,6 +937,8 @@ class ProcessHandle extends CoreProcess {
     return name === undefined ? Object.freeze({ ...options }) : options[name]
   }
 
+  public async opened() { return required(processSnapshots.get(this)).opened }
+
   public async exit() {
     await representation(this.system).call("/process/exit", this.identity)
   }

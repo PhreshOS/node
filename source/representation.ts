@@ -12,7 +12,8 @@ import {
   type ProgramSnapshot,
   type ServiceAddress,
   type WindowLayer,
-  type WindowState as CoreWindowState
+  type WindowState as CoreWindowState,
+  parseOpenTarget
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
@@ -26,6 +27,7 @@ export interface ProcessIdentityState {
   name: string | null
   program: string
   options: ProcessSnapshot["options"]
+  opened: ProcessSnapshot["opened"]
   startedAt: Date
 }
 
@@ -441,7 +443,7 @@ function processState(value: unknown): ProcessState {
 
 /** Read the immutable facts needed to retain one Process handle. */
 export function processIdentityState(value: unknown): ProcessIdentityState {
-  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string" || !record(value.options)) {
+  if (!record(value) || typeof value.reference !== "string" || typeof value.identity !== "string" || !record(value.options) || value.opened === undefined) {
     throw new Error("The System returned an invalid Process")
   }
 
@@ -461,6 +463,7 @@ export function processIdentityState(value: unknown): ProcessIdentityState {
     name: typeof value.name === "string" ? value.name : null,
     program,
     options: value.options as Record<string, string>,
+    opened: value.opened === null ? null : parseOpenTarget(value.opened),
     startedAt
   }
 }

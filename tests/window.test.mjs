@@ -22,7 +22,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
   }
   const process = {
     reference: "process-reference", identity: "process", name: "main", program: "example",
-    parent: null, options: {}, startedAt: new Date(), serverEndpoint: false, server: null,
+    parent: null, options: {}, opened: null, startedAt: new Date(), serverEndpoint: false, server: null,
     client: { service: false }, clientEndpoint: { window }
   }
   let publish
