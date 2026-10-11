@@ -2,12 +2,14 @@ import {
   opensType,
   OpenRequest as CoreOpenRequest,
   parseOpenRequestSnapshot,
+  parseOpenOptions,
   parseOpenTarget,
   parseOpenType,
   parseOpeningDefaults,
   parseProgramSnapshot,
   type OpenRequestEvents,
   type OpenRequestSnapshot,
+  type OpenOptions,
   type OpenTarget,
   type SystemOpening,
   type SystemOpeningEvents,
@@ -151,8 +153,8 @@ export class System implements CoreSystem {
   public readonly uploads: SystemUploads
   public readonly network = network(() => connectedSignal(this))
 
-  public async open(target: OpenTarget) {
-    await representation(this).call("/open", parseOpenTarget(target))
+  public async open(target: OpenTarget, options?: OpenOptions) {
+    await representation(this).call("/open", parseOpenTarget(target), parseOpenOptions(options))
   }
 
   public async about() {
