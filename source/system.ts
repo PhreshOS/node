@@ -635,11 +635,12 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   }
 
   public async list(options: SystemProgramListOptions = {}) {
-    const { installed, opens, startup } = parseSystemProgramListOptions(options)
+    const { installed, opens, startup, pinned } = parseSystemProgramListOptions(options)
     return [...representation(this.system).programs.values()]
       .filter(program => installed === undefined || program.installed === installed)
       .filter(program => opens === undefined || opensType(program.opens ?? [], opens))
       .filter(program => startup === undefined || program.startup === startup)
+      .filter(program => pinned === undefined || (program.pinnedAt !== null) === pinned)
       .sort((left, right) => left.identity.localeCompare(right.identity))
       .map(program => programHandle(this.system, program))
   }
@@ -663,7 +664,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   private event(event: string, values: unknown[]) {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
     if (event === "uninstall") return { program, purge: values[1] === true }
-    if (event === "pin") return { program, pinned: values[1] === true }
+    if (event === "pin") return { program, pinnedAt: pinTime(values[1]) }
     if (event === "changePermissions") return { program, permissions: parsePermissions((values[0] as ProgramState).permissions) }
     if (event === "changeStartup") return { program, launch: values[1] as Launch | null }
     return program
@@ -696,7 +697,7 @@ class ProgramHandle extends CoreProgram {
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
         if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
         else if (event === "uninstall") subscriber({ purge: values[0] === true })
-        else if (event === "pin") subscriber(values[0] === true)
+        else if (event === "pin") subscriber(pinTime(values[0]))
         else subscriber(undefined)
       })
     })
@@ -744,7 +745,7 @@ class ProgramHandle extends CoreProgram {
   }
   public get client(): ClientDeclaration | null { return this.snapshot.client }
 
-  public pinned() { return representation(this.system).call<boolean>("/program/pinned", this.address(), "get") }
+  public async pinnedAt() { return pinTime(await representation(this.system).call<unknown>("/program/pinned", this.address(), "get")) }
   public async pin(pinned = true) { await representation(this.system).call("/program/pinned", this.address(), pinned ? "pin" : "unpin") }
 
   public update(snapshot: ProgramState) {
@@ -1376,3 +1377,8 @@ function required<Value>(value: Value | undefined, identity = ""): Value {
 type Process = CoreProcess
 type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreServerEndpoint<EventsMap, Fallback>
 type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>
+
+/** A pin time as it travels, ISO text, as the time it names; anything else is no pin. */
+export function pinTime(value: unknown): Date | null {
+  return typeof value === "string" ? new Date(value) : null
+}

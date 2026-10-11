@@ -12,7 +12,7 @@ test("Window flags and geometry cross the owner boundary independently", async (
   const program = {
     reference: "program-reference", identity: "example", assetId: "example-assets",
     installed: false, name: "Example", version: "0.0.0", description: null, website: null, categories: [], keywords: [], opens: [], declaredPermissions: {}, hasAgent: false,
-    permissions: {}, startup: false,
+    permissions: {}, startup: false, pinnedAt: null,
     server: null,
     client: { sandbox: true, start: true, service: false, title: null, header: null, position: null, size: null, layer: null, minimize: null, maximize: null }
   }

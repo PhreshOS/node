@@ -12,7 +12,7 @@ test("a default's change reaches the owner with the type and the Program, or nul
   const program = {
     reference: "program-reference", identity: "preview", assetId: "preview-assets",
     installed: true, name: "Preview", version: "0.0.0", description: null, website: null, categories: [], keywords: [], declaredPermissions: {}, hasAgent: false,
-    permissions: {}, startup: false, server: null, client: null, opens: ["image/*"]
+    permissions: {}, startup: false, pinnedAt: null, server: null, client: null, opens: ["image/*"]
   }
   const defaults = {}
   const gateway = createGateway(gatewayAddress(home), {

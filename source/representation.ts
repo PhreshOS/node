@@ -17,7 +17,7 @@ import {
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
-export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions, startup: boolean }>
+export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions, startup: boolean, pinnedAt: string | null }>
 
 export type WindowState = Omit<CoreWindowState, "front"> & Readonly<{ depth: number }>
 
@@ -197,7 +197,7 @@ export default class SystemRepresentation {
     subscribe("/auth/program/install", value => this.arriveProgram("install", value))
     subscribe("/auth/program/uninstall", (value, purge) => this.uninstallProgram(value, purge === true))
     subscribe("/auth/program/forget", value => this.forgetProgram(value))
-    subscribe("/auth/program/pinned", (value, pinned) => this.pinProgram(value, pinned === true))
+    subscribe("/auth/program/pinned", (value, pinnedAt) => this.pinProgram(value, typeof pinnedAt === "string" ? pinnedAt : null))
     subscribe("/auth/program/permissions-change", value => this.changeProgramPermissions(value))
     subscribe("/auth/program/startup-change", (value, launch) => this.changeProgramStartup(value, launch))
     subscribe("/auth/program/log", (reference, value) => {
@@ -299,11 +299,11 @@ export default class SystemRepresentation {
     this.emit("program:forget", program)
   }
 
-  private pinProgram(value: unknown, pinned: boolean) {
+  private pinProgram(value: unknown, pinnedAt: string | null) {
     const program = programState(value)
     this.programs.set(program.identity, program)
-    this.emit(`program:${program.reference}:pin`, pinned)
-    this.emit("program:pin", program, pinned)
+    this.emit(`program:${program.reference}:pin`, pinnedAt)
+    this.emit("program:pin", program, pinnedAt)
   }
 
   private changeProgramPermissions(value: unknown) {
@@ -419,8 +419,10 @@ function programState(value: unknown): ProgramState {
   const permissions = parsePermissions((value as { permissions?: unknown }).permissions)
   const startup = (value as { startup?: unknown }).startup
   if (typeof startup !== "boolean") throw new Error("The System returned a Program without startup state")
+  const pinnedAt = (value as { pinnedAt?: unknown }).pinnedAt
+  if (pinnedAt !== null && typeof pinnedAt !== "string") throw new Error("The System returned a Program without its pin time")
 
-  return { ...parsed, installed: parsed.installed, permissions, startup }
+  return { ...parsed, installed: parsed.installed, permissions, startup, pinnedAt }
 
 }
 

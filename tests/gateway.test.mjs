@@ -322,6 +322,7 @@ test("System reconstructs and follows the authoritative LinkManager model", asyn
     hasAgent: true,
     permissions: {},
     startup: false,
+    pinnedAt: null,
     server: { start: true, service: false },
     client: null
   }
@@ -644,6 +645,7 @@ test("Endpoint observations remain live across the owner LinkManager connection"
     hasAgent: false,
     permissions: {},
     startup: false,
+    pinnedAt: null,
     server: { start: true, service: false },
     client: null
   }
