@@ -1,5 +1,6 @@
 import {
   opensType,
+  programOrder,
   OpenRequest as CoreOpenRequest,
   parseOpenRequestSnapshot,
   parseOpenOptions,
@@ -637,11 +638,11 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   public async list(options: SystemProgramListOptions = {}) {
     const { installed, opens, startup, pinned } = parseSystemProgramListOptions(options)
     return [...representation(this.system).programs.values()]
-      .filter(program => installed === undefined || program.installed === installed)
+      .filter(program => installed === undefined || (program.installedAt !== null) === installed)
       .filter(program => opens === undefined || opensType(program.opens ?? [], opens))
       .filter(program => startup === undefined || program.startup === startup)
       .filter(program => pinned === undefined || (program.pinnedAt !== null) === pinned)
-      .sort((left, right) => left.identity.localeCompare(right.identity))
+      .sort(programOrder)
       .map(program => programHandle(this.system, program))
   }
 
@@ -664,7 +665,7 @@ class ProgramRegistry extends Events<SystemProgramEvents> {
   private event(event: string, values: unknown[]) {
     const program = programHandle(this.system, required(values[0] as ProgramState | undefined))
     if (event === "uninstall") return { program, purge: values[1] === true }
-    if (event === "pin") return { program, pinnedAt: pinTime(values[1]) }
+    if (event === "pin") return { program, pinnedAt: timeOrNull(values[1]) }
     if (event === "changePermissions") return { program, permissions: parsePermissions((values[0] as ProgramState).permissions) }
     if (event === "changeStartup") return { program, launch: values[1] as Launch | null }
     return program
@@ -677,6 +678,7 @@ class ProgramHandle extends CoreProgram {
   public override readonly events: Subscribable<ProgramEvents, never>["events"]
   private readonly reference: string
   public readonly identity: string
+  public readonly createdAt: Date
   public readonly data: Storage
   public readonly cache: Storage
   public readonly store: ProgramStore
@@ -691,13 +693,14 @@ class ProgramHandle extends CoreProgram {
     this.snapshot = snapshot
     this.reference = snapshot.reference
     this.identity = snapshot.identity
+    this.createdAt = new Date(snapshot.createdAt)
     const address = this.address()
     const events = new Events<ProgramEvents>(["processCreate", "processExit", "forget", "uninstall", "pin"], (event, subscriber) => {
       if (event === null) throw new Error("Program events are named")
       return representation(system).on(`program:${this.reference}:${event}`, (...values) => {
         if (event === "processCreate" || event === "processExit") subscriber(programProcessEvent(system, event, values))
         else if (event === "uninstall") subscriber({ purge: values[0] === true })
-        else if (event === "pin") subscriber(pinTime(values[0]))
+        else if (event === "pin") subscriber(timeOrNull(values[0]))
         else subscriber(undefined)
       })
     })
@@ -745,7 +748,7 @@ class ProgramHandle extends CoreProgram {
   }
   public get client(): ClientDeclaration | null { return this.snapshot.client }
 
-  public async pinnedAt() { return pinTime(await representation(this.system).call<unknown>("/program/pinned", this.address(), "get")) }
+  public async pinnedAt() { return timeOrNull(await representation(this.system).call<unknown>("/program/pinned", this.address(), "get")) }
   public async pin(pinned = true) { await representation(this.system).call("/program/pinned", this.address(), pinned ? "pin" : "unpin") }
 
   public update(snapshot: ProgramState) {
@@ -769,8 +772,8 @@ class ProgramHandle extends CoreProgram {
     return typeof value === "string" ? value : null
   }
 
-  public async installed() {
-    return this.snapshot.installed
+  public async installedAt() {
+    return timeOrNull(await representation(this.system).call<unknown>("/program/installed-at", this.address()))
   }
 
   public async processes() {
@@ -1379,6 +1382,6 @@ type ServerEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreSer
 type ClientEndpoint<EventsMap extends object = {}, Fallback = unknown> = CoreClientEndpoint<EventsMap, Fallback>
 
 /** A pin time as it travels, ISO text, as the time it names; anything else is no pin. */
-export function pinTime(value: unknown): Date | null {
+export function timeOrNull(value: unknown): Date | null {
   return typeof value === "string" ? new Date(value) : null
 }

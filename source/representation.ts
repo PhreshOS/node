@@ -17,7 +17,7 @@ import {
 } from "@phreshos/core"
 import type { GatewayConnection } from "./transport.js"
 
-export type ProgramState = ProgramSnapshot & Readonly<{ installed: boolean, permissions: Permissions, startup: boolean, pinnedAt: string | null }>
+export type ProgramState = ProgramSnapshot & Readonly<{ installedAt: string | null, permissions: Permissions, startup: boolean, pinnedAt: string | null }>
 
 export type WindowState = Omit<CoreWindowState, "front"> & Readonly<{ depth: number }>
 
@@ -414,7 +414,7 @@ function ownerSystem(value: unknown) {
 
 function programState(value: unknown): ProgramState {
   const parsed = parseProgramSnapshot(value)
-  if (parsed.installed === undefined) throw new Error("The System returned a Program without installation state")
+  if (parsed.installedAt === undefined) throw new Error("The System returned a Program without its install time")
 
   const permissions = parsePermissions((value as { permissions?: unknown }).permissions)
   const startup = (value as { startup?: unknown }).startup
@@ -422,7 +422,7 @@ function programState(value: unknown): ProgramState {
   const pinnedAt = (value as { pinnedAt?: unknown }).pinnedAt
   if (pinnedAt !== null && typeof pinnedAt !== "string") throw new Error("The System returned a Program without its pin time")
 
-  return { ...parsed, installed: parsed.installed, permissions, startup, pinnedAt }
+  return { ...parsed, installedAt: parsed.installedAt, permissions, startup, pinnedAt }
 
 }
 
