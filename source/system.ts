@@ -798,6 +798,10 @@ class ProgramHandle extends CoreProgram {
     return await representation(this.system).call<string[]>("/process/exit-all", this.identity, "")
   }
 
+  public async clearStorage() { await representation(this.system).call("/program/clear-storage", this.address()) }
+
+  public async storageSize() { return await representation(this.system).call<number>("/program/storage-size", this.address()) }
+
   public async *runProcess(launch: Launch = {}, options: ProgramProcessRunOptions = {}): AsyncGenerator<ProgramProcessRunEvent, void, void> {
     let process: ProcessHandle | null = null
 

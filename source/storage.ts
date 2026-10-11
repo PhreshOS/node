@@ -165,6 +165,14 @@ class NodeStorage extends Storage {
     mkdirSync(destination, { recursive: true })
   }
 
+  public async size() {
+    this.boundary.active()
+    const destination = await this.path()
+    const found = describe(destination)
+    if (found?.kind === "file") throw new Error("Only a Storage directory has a size of what it holds")
+    return found ? bytesBeneath(destination) : 0
+  }
+
   public async space(): Promise<StorageSpace> {
     this.boundary.active()
     const value = statfsSync(await this.path())
@@ -364,4 +372,15 @@ function descendsFrom(path: string, parent: string) {
 function combinedSignal(left?: AbortSignal, right?: AbortSignal) {
   if (left && right) return AbortSignal.any([left, right])
   return left ?? right
+}
+
+/** How many bytes the files beneath a directory hold; links are not followed. */
+function bytesBeneath(directory: string): number {
+  let total = 0
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) total += bytesBeneath(path)
+    else if (entry.isFile()) total += lstatSync(path).size
+  }
+  return total
 }
