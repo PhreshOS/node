@@ -33,8 +33,8 @@ export interface ProcessIdentityState {
 
 export interface ProcessState extends ProcessIdentityState {
   serverEndpoint: boolean
-  server: { ready: boolean, service: boolean } | null
-  client: { service: boolean } | null
+  server: { ready: boolean, service: string | false } | null
+  client: { service: string | false } | null
   clientEndpoint: { window: WindowState | null } | null
 }
 
@@ -228,8 +228,6 @@ export default class SystemRepresentation {
     subscribe("/auth/process/client-start", (identity, value) => this.changeEndpoint(identity, "client", value))
     subscribe("/auth/process/client-stop", (identity, value) => this.changeEndpoint(identity, "client", value, false))
     subscribe("/auth/process/exited", (value, code, signal) => this.exitProcess(value, code, signal))
-    subscribe("/auth/process/service-available", value => this.serviceEvent("available", value))
-    subscribe("/auth/process/service-unavailable", value => this.serviceEvent("unavailable", value))
 
     subscribe("/auth/connection/create", value => this.connectionEvent("create", value))
     subscribe("/auth/connection/disconnect", value => this.connectionEvent("disconnect", value))
@@ -269,10 +267,6 @@ export default class SystemRepresentation {
     const session = parseSessionSnapshot(value)
     this.emit(`session:${session.identity}:${event}`)
     this.emit(`session:${event}`, session)
-  }
-
-  private serviceEvent(event: "available" | "unavailable", value: unknown) {
-    this.emit(`service:${event}`, value)
   }
 
   private arriveProgram(event: "create" | "install", value: unknown) {
@@ -432,9 +426,9 @@ function processState(value: unknown): ProcessState {
 
   return {
     ...identity,
-    server: record(source.server) ? { ready: source.server.ready === true, service: source.server.service === true } : null,
+    server: record(source.server) ? { ready: source.server.ready === true, service: serviceOf(source.server.service) } : null,
     serverEndpoint: source.serverEndpoint === true,
-    client: record(source.client) ? { service: source.client.service === true } : null,
+    client: record(source.client) ? { service: serviceOf(source.client.service) } : null,
     clientEndpoint: source.clientEndpoint === null
       ? null
       : { window: (source.clientEndpoint as Record<string, unknown>).window === null
@@ -506,3 +500,8 @@ function camel(value: string) {
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) }
 function exception(error: unknown) { return error instanceof Error ? error : new Error(String(error)) }
 function abortReason(signal: AbortSignal) { return signal.reason instanceof Error ? signal.reason : new Error("The operation was cancelled") }
+
+/** The Service name an Endpoint holds, or `false` for none. */
+function serviceOf(value: unknown): string | false {
+  return typeof value === "string" ? value : false
+}

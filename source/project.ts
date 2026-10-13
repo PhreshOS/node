@@ -2,6 +2,7 @@ import {
   isRelativeValue,
   parseLaunch,
   parseProcessDefaults,
+  parseServiceValue,
   layers,
   type ClientConfig,
   type Config,
@@ -318,7 +319,7 @@ function validateConfig(config: Config) {
     if (!declared) continue
     if (typeof declared.location !== "string") throw new Error(`A declared ${half} half must have a location`)
     if (declared.start !== undefined && typeof declared.start !== "boolean") throw new Error(`A declared ${half} Endpoint's start default must be true or false`)
-    if (declared.service !== undefined && typeof declared.service !== "boolean") throw new Error(`A declared ${half} Endpoint's service default must be true or false`)
+    if (declared.service !== undefined) parseServiceValue(declared.service, `A declared ${half} Endpoint's service`)
   }
 
   if (config.client?.sandbox !== undefined && typeof config.client.sandbox !== "boolean") throw new Error("A declared Client Endpoint's sandbox mode must be true or false")
