@@ -23,6 +23,7 @@ import {
   PermissionRequest as CorePermissionRequest,
   ServerEndpoint as CoreServerEndpoint,
   ServerService as CoreServerService,
+  Service as CoreService,
   Session as CoreSession,
   execute as executeRequest,
   isServiceAddress,
@@ -41,7 +42,6 @@ import {
   parseSessionSnapshot,
   parseSessionState,
   parseSystemProgramListOptions,
-  parseSystemServiceListOptions,
   type AuthenticationCredentials,
   type Appearance,
   type AppearanceUpdate,
@@ -54,7 +54,6 @@ import {
   type EndpointLifecycleEvents,
   type ServiceLifecycle,
   type ServiceLifecycleEvents,
-  type ServiceProgramMetadata,
   type EndpointDeclaration,
   type Launch,
   type ClientLaunch,
@@ -92,8 +91,6 @@ import {
   type SystemProgramEvents,
   type SystemUploads,
   type SystemService,
-  type SystemServiceListOptions,
-  type SystemServiceEvents,
   type SystemLogRecord,
   type SystemLogs,
   type SessionEvents,
@@ -191,7 +188,7 @@ export class System implements CoreSystem {
     this.authentication = new AuthenticationRegistry(this)
     this.permissions = new PermissionRegistry(this)
     this.logs = new SystemLogsHandle(this)
-    this.service = new ServiceRegistry(this)
+    this.service = ((address: ServiceAddress) => serviceHandle(this, address)) as SystemService
     this.uploads = new Uploads(value => uploadRequest(this, value), () => connectedSignal(this))
     representation.activate()
   }
@@ -601,30 +598,17 @@ class SessionHandle extends CoreSession {
   }
 }
 
-class ServiceRegistry extends Events<SystemServiceEvents, never> implements SystemService {
-  public constructor(private readonly system: System) {
-    super(["available", "unavailable"], (event, subscriber) => {
-      if (event === null) throw new Error("System Service events are named")
-      return representation(system).on(`service:${event}`, value => subscriber(this.prepare(parseServiceAddress(value))))
-    })
-  }
-
-  public async list(options: SystemServiceListOptions = {}): Promise<(CoreServerService | CoreClientService)[]> {
-    const addresses = await representation(this.system).call<unknown[]>("/process/service/list", parseSystemServiceListOptions(options))
-    return addresses.map(value => this.prepare(parseServiceAddress(value)))
-  }
-
-  public prepare<EventsMap extends object = {}, Fallback = unknown>(address: ServiceAddress<"server">): CoreServerService<EventsMap, Fallback>
-  public prepare<EventsMap extends object = {}, Fallback = unknown>(address: ServiceAddress<"client">): CoreClientService<EventsMap, Fallback>
-  public prepare(address: ServiceAddress): CoreServerService | CoreClientService
-  public prepare(address: ServiceAddress): CoreServerService | CoreClientService {
-    const normalized = parseServiceAddress(address)
-    const identity = JSON.stringify([normalized.program, normalized.process, normalized.endpoint])
-
-    return systemState(this.system).handles.obtain(`service:${identity}`, () => normalized.endpoint === "server"
-      ? new ServerServiceHandle(this.system, normalized as ServiceAddress<"server">)
-      : new ClientServiceHandle(this.system, normalized as ServiceAddress<"client">))
-  }
+/**
+ * The handle to a Service name, the same one for the same address: the Server holding it, the Client
+ * holding it, or whichever Endpoint holds it when no kind is named. It reaches the System only when used.
+ */
+function serviceHandle(system: System, value: ServiceAddress): CoreService {
+  const { name, endpoint } = parseServiceAddress(value)
+  const key = `service:${name}:${endpoint ?? "any"}`
+  const handles = systemState(system).handles
+  if (endpoint === "server") return handles.obtain(key, () => new ServerServiceHandle(system, Object.freeze({ name, endpoint })))
+  if (endpoint === "client") return handles.obtain(key, () => new ClientServiceHandle(system, Object.freeze({ name, endpoint })))
+  return handles.obtain(key, () => new AnyServiceHandle(system, Object.freeze({ name })))
 }
 
 class ProgramRegistry extends Events<SystemProgramEvents> {
@@ -997,9 +981,9 @@ class EndpointOperations extends Events<{}, unknown> {
     await waitEndpointReady(this.system, this.owner, this.endpoint, timeout)
   }
 
-  public async isService() {
+  public async service() {
     this.requireEndpoint()
-    return endpointState(this.system, this.owner, this.endpoint)?.service === true
+    return endpointState(this.system, this.owner, this.endpoint)?.service ?? false
   }
 
   public publish(event: string, payload?: unknown) {
@@ -1032,8 +1016,7 @@ class ServerEndpointHandle extends CoreServerEndpoint {
     this.traffic = new ServerTrafficHandle(
       representation(system),
       owner.identity,
-      "server",
-      value => endpointFromReference(system, value)
+      "server"
     )
     this.lifecycle = this.base.lifecycle
     this.subscribe = this.base.subscribe
@@ -1044,7 +1027,7 @@ class ServerEndpointHandle extends CoreServerEndpoint {
   public process() { return this.base.process() }
   public running() { return this.base.running() }
   public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
-  public isService() { return this.base.isService() }
+  public service() { return this.base.service() }
   public start(launch?: ServerLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
@@ -1080,8 +1063,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
     this.traffic = new EndpointTrafficHandle(
       representation(system),
       owner.identity,
-      "client",
-      value => endpointFromReference(system, value)
+      "client"
     )
     this.lifecycle = this.base.lifecycle
     this.subscribe = this.base.subscribe
@@ -1094,7 +1076,7 @@ class ClientEndpointHandle extends CoreClientEndpoint {
   public process() { return this.base.process() }
   public running() { return this.base.running() }
   public waitReady(timeout?: number) { return this.base.waitReady(timeout) }
-  public isService() { return this.base.isService() }
+  public service() { return this.base.service() }
   public start(launch?: ClientLaunch) { return this.base.start(launch) }
   public stop() { return this.base.stop() }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
@@ -1158,16 +1140,6 @@ class ServiceBase {
     await representation(this.system).call("/process/service/wait-ready", this.serviceAddress, timeout)
   }
 
-  public async programMetadata() {
-    const value = await representation(this.system).call<unknown>("/process/service/program-metadata", this.serviceAddress)
-    return parseServiceProgramMetadata(value)
-  }
-
-  public async programIcon(size: IconSize = "medium") {
-    const value = await representation(this.system).call<unknown>("/process/service/program-icon", this.serviceAddress, size)
-    return parseServiceProgramIcon(value)
-  }
-
   public publish(event: string, payload?: unknown) {
     void representation(this.system).call("/process/service/publish", this.serviceAddress, event, payload)
   }
@@ -1180,7 +1152,7 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   public override readonly events: Subscribable<EventsMap, Fallback>["events"]
   private readonly base: ServiceBase
 
-  public constructor(private readonly system: System, private readonly serviceAddress: ServiceAddress<"server">) {
+  public constructor(private readonly system: System, private readonly serviceAddress: ServiceAddress<"server"> & Readonly<{ endpoint: "server" }>) {
     super()
     this.base = new ServiceBase(system, serviceAddress)
     this.lifecycle = this.base.lifecycle
@@ -1194,8 +1166,6 @@ class ServerServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
-  public override programMetadata() { return this.base.programMetadata() }
-  public override programIcon(size?: IconSize) { return this.base.programIcon(size) }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
   public override async ask<Answer = unknown>(event: string, payload?: unknown) {
@@ -1215,7 +1185,7 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
   public override readonly events: Subscribable<EventsMap, Fallback>["events"]
   private readonly base: ServiceBase
 
-  public constructor(system: System, private readonly serviceAddress: ServiceAddress<"client">) {
+  public constructor(system: System, private readonly serviceAddress: ServiceAddress<"client"> & Readonly<{ endpoint: "client" }>) {
     super()
     this.base = new ServiceBase(system, serviceAddress)
     this.lifecycle = this.base.lifecycle
@@ -1229,8 +1199,32 @@ class ClientServiceHandle<EventsMap extends object = {}, Fallback = unknown> ext
 
   public override address() { return this.serviceAddress }
   public override available() { return this.base.available() }
-  public override programMetadata() { return this.base.programMetadata() }
-  public override programIcon(size?: IconSize) { return this.base.programIcon(size) }
+  public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
+  public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
+}
+
+/** Whichever Endpoint holds a Service name, for what both kinds share. */
+class AnyServiceHandle<EventsMap extends object = {}, Fallback = unknown> extends CoreService<EventsMap, Fallback> {
+  public override readonly lifecycle: ServiceLifecycle
+  public override readonly subscribe: Subscribable<EventsMap, Fallback>["subscribe"]
+  public override readonly wait: Subscribable<EventsMap, Fallback>["wait"]
+  public override readonly events: Subscribable<EventsMap, Fallback>["events"]
+  private readonly base: ServiceBase
+
+  public constructor(system: System, private readonly serviceAddress: ServiceAddress) {
+    super()
+    this.base = new ServiceBase(system, serviceAddress)
+    this.lifecycle = this.base.lifecycle
+    const events = new Events<EventsMap, Fallback>([], (event, subscriber, impossible) => representation(system).follow({
+      scope: "service", address: serviceAddress, kind: "events", event
+    }, (_received, payload) => subscriber(payload), impossible))
+    this.subscribe = events.subscribe
+    this.wait = events.wait
+    this.events = events.events
+  }
+
+  public override address() { return this.serviceAddress }
+  public override available() { return this.base.available() }
   public override waitReady(timeout?: number) { return this.base.waitReady(timeout) }
   public override readonly publish = (event: string, payload?: unknown) => this.base.publish(event, payload)
 }
@@ -1336,27 +1330,8 @@ function endpointReady(state: ProcessState["server"] | ProcessState["client"], e
 }
 
 function parseServiceAddress(value: unknown): ServiceAddress {
-  if (!isServiceAddress(value)) throw new Error("A complete Service address is required")
-  return Object.freeze({ program: value.program, process: value.process, endpoint: value.endpoint })
-}
-
-function parseServiceProgramMetadata(value: unknown): ServiceProgramMetadata {
-  if (!value || typeof value !== "object") throw new Error("The System returned invalid Service Program metadata")
-
-  const metadata = value as { name?: unknown, version?: unknown }
-
-  if (typeof metadata.name !== "string" || typeof metadata.version !== "string") {
-    throw new Error("The System returned invalid Service Program metadata")
-  }
-
-  return Object.freeze({ name: metadata.name, version: metadata.version })
-}
-
-function parseServiceProgramIcon(value: unknown) {
-  if (!Array.isArray(value) || value.some(byte => typeof byte !== "number")) {
-    throw new Error("The System returned an invalid Service Program icon")
-  }
-  return new Blob([Uint8Array.from(value)], { type: "image/png" })
+  if (!isServiceAddress(value)) throw new Error("A Service is reached by its name, such as file-picker-v1, and optionally the kind of Endpoint")
+  return Object.freeze({ name: value.name, ...(value.endpoint === undefined ? {} : { endpoint: value.endpoint }) })
 }
 
 function frontWindow(system: System, process: ProcessHandle) {

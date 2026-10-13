@@ -29,7 +29,8 @@ const nodeProgram: Program = canonicalProgram
 const sameEndpoint: Endpoint<{ change: number }, string> = endpoint
 const sameServer: ServerEndpoint<{ change: number }, string> = server
 const sameClient: ClientEndpoint<{ change: number }, string> = client
-const service: Service = connected.service.prepare({ program: "example", process: "main", endpoint: serviceEndpoint })
+const service: Service = connected.service({ name: "example-v1", endpoint: serviceEndpoint })
+const either: Service = connected.service({ name: "example-v1" })
 const connectionCapability: Exclude<keyof System, keyof CoreSystem> = "disconnect"
 const onlyConnectionCapability: "disconnect" = null as never as Exclude<keyof System, keyof CoreSystem>
 const authenticationState: Promise<AuthenticationState> = connected.authentication.state()
@@ -38,7 +39,6 @@ const sessions: Promise<Session[]> = connected.authentication.sessions()
 const execution: Promise<ExecuteOperationSummary[]> = connected.execute({ $domain: "operation", $operation: "list" })
 const appearanceUpdate: Promise<void> = connected.appearance.update({ colors: { dark: { danger: "#ff0000" } } })
 const programDefinition = program.definition()
-const serviceIcon = service.programIcon("small")
 const systemLogs = connected.logs.query("select * from logs where level = ?", ["error"])
 const systemLogStop = connected.logs.subscribe("log", record => void record.level)
 const programLogs = program.logs.query("select * from logs where process = ?", ["main"])
@@ -60,7 +60,7 @@ void sessions
 void execution
 void appearanceUpdate
 void programDefinition
-void serviceIcon
+void either
 void systemLogs
 void systemLogStop
 void programLogs

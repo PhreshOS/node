@@ -161,7 +161,7 @@ test("Project keeps an HTTP development Client Endpoint location as a runtime lo
 test("System.connect exposes the shared System contract over one owner-local address", async () => {
   const home = await mkdtemp(join(tmpdir(), "phresh-gateway-"))
   const address = gatewayAddress(home)
-  const requestedServiceIconSizes = []
+  const availabilityAddresses = []
   const credentialChanges = []
   let signOutAllSessions = 0
   const server = createGateway(address, {
@@ -189,14 +189,9 @@ test("System.connect exposes the shared System contract over one owner-local add
         return null
       }
       if (event === "/auth/uploads/access") return { path: join(home, "uploads"), limit: 1024 }
-      if (event === "/auth/process/service/list") {
-        return [{ program: "example", process: "main", endpoint: "server" }]
-      }
-      if (event === "/auth/process/service/available") return true
-      if (event === "/auth/process/service/program-metadata") return { name: "Example", version: "0.0.0" }
-      if (event === "/auth/process/service/program-icon") {
-        requestedServiceIconSizes.push(values[1])
-        return [137, 80, 78, 71]
+      if (event === "/auth/process/service/available") {
+        availabilityAddresses.push(values[0])
+        return true
       }
     }
   })
@@ -231,19 +226,20 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.deepEqual(credentialChanges, [{ username: "next", password: "next-password" }])
     assert.equal(signOutAllSessions, 1)
 
-    const serverService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })
-    const sameServerService = system.service.prepare({ program: "example", process: "main", endpoint: "server" })
-    const clientService = system.service.prepare({ program: "example", process: "main", endpoint: "client" })
+    const serverService = system.service({ name: "example-v1", endpoint: "server" })
+    const sameServerService = system.service({ name: "example-v1", endpoint: "server" })
+    const clientService = system.service({ name: "example-v1", endpoint: "client" })
+    const eitherService = system.service({ name: "example-v1" })
 
     assert.equal(serverService, sameServerService)
-    assert.throws(() => system.service.prepare({ process: "main", endpoint: "server" }), /complete Service address/)
+    assert.equal(eitherService, system.service({ name: "example-v1" }))
+    assert.throws(() => system.service({ program: "example", process: "main", endpoint: "server" }), /reached by its name/)
+    assert.equal("list" in system.service, false)
     assert(serverService instanceof Service)
     assert(serverService instanceof ServerService)
     assert.equal("channel" in serverService, false)
-    assert.equal("name" in serverService, false)
+    assert.equal("programMetadata" in serverService, false)
     assert.equal(typeof serverService.available, "function")
-    assert.equal(typeof serverService.programMetadata, "function")
-    assert.equal(typeof serverService.programIcon, "function")
     assert.equal(typeof serverService.publish, "function")
     assert.equal(typeof serverService.waitReady, "function")
     assert.equal(typeof serverService.lifecycle.subscribe, "function")
@@ -252,18 +248,12 @@ test("System.connect exposes the shared System contract over one owner-local add
     assert.equal(typeof clientService.available, "function")
     assert.equal(typeof clientService.publish, "function")
     assert.equal(typeof clientService.waitReady, "function")
-    assert.deepEqual((await system.service.list()).map(service => service.address()), [serverService.address()])
-    assert.deepEqual((await system.service.list({ name: "main" })).map(service => service.address()), [serverService.address()])
-    await assert.rejects(system.service.list("main"), /object/)
+    assert(eitherService instanceof Service)
+    assert.equal(eitherService instanceof ServerService || eitherService instanceof ClientService, false)
     assert.equal(await serverService.available(), true)
-    const metadata = await serverService.programMetadata()
-    await serverService.programIcon()
-    const icon = await serverService.programIcon("small")
-    assert.deepEqual(requestedServiceIconSizes, ["medium", "small"])
-    assert.equal(metadata.name, "Example")
-    assert.equal(metadata.version, "0.0.0")
-    assert.equal(icon.type, "image/png")
-    assert.deepEqual([...new Uint8Array(await icon.arrayBuffer())], [137, 80, 78, 71])
+    assert.equal(await eitherService.available(), true)
+    // The System hears the name and the kind asked for, or the name alone.
+    assert.deepEqual(availabilityAddresses, [{ name: "example-v1", endpoint: "server" }, { name: "example-v1" }])
   } finally {
     await system.disconnect()
     await server.close()
