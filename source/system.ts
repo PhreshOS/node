@@ -987,7 +987,8 @@ class EndpointOperations extends Events<{}, unknown> {
   }
 
   public publish(event: string, payload?: unknown) {
-    void representation(this.system).call("/process/endpoint/publish", this.owner.identity, this.endpoint, event, payload)
+    // Fire-and-forget, as every publish: a publication that cannot be delivered is dropped silently.
+    void representation(this.system).call("/process/endpoint/publish", this.owner.identity, this.endpoint, event, payload).catch(() => undefined)
   }
 
   private async operation(operation: "start" | "stop", launch?: ServerLaunch | ClientLaunch) {
@@ -1141,7 +1142,7 @@ class ServiceBase {
   }
 
   public publish(event: string, payload?: unknown) {
-    void representation(this.system).call("/process/service/publish", this.serviceAddress, event, payload)
+    void representation(this.system).call("/process/service/publish", this.serviceAddress, event, payload).catch(() => undefined)
   }
 }
 
